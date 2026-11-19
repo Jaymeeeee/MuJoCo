@@ -17,10 +17,12 @@ import time
 
 import numpy as np
 
+from .paths import relocated_checkpoint_path
+
 
 def resolve_checkpoint(checkpoint) -> Path:
     """Accept either a training-step directory or its pretrained_model child."""
-    path = Path(checkpoint).expanduser().resolve()
+    path = relocated_checkpoint_path(checkpoint).resolve()
     if (path / 'pretrained_model').is_dir():
         path /= 'pretrained_model'
     required = ('config.json', 'model.safetensors', 'policy_preprocessor.json',
@@ -232,6 +234,7 @@ class LeRobotPolicy:
         )
         if self.policy_type == 'diffusion':
             self._provenance.update(
+                denoiser_type=getattr(config, 'denoiser_type', 'unet'),
                 horizon=config.horizon,
                 noise_scheduler_type=config.noise_scheduler_type,
                 num_train_timesteps=config.num_train_timesteps,

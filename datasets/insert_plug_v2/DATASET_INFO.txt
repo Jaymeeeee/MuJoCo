@@ -31,10 +31,10 @@ Download large files with Git LFS
   git lfs install
   git clone https://github.com/Jaymeeeee/MuJoCo.git
   cd MuJoCo
-  git lfs pull --include="outputs/datasets/insert_plug_v2/**" --exclude=""
+  git lfs pull --include="datasets/insert_plug_v2/**" --exclude=""
 
 Verify the downloaded dataset on Linux
-  cd outputs/datasets/insert_plug_v2
+  cd datasets/insert_plug_v2
   sha256sum -c SHA256SUMS
 
 Parquet, MP4 and the positions PDF are stored using Git LFS. A small text file

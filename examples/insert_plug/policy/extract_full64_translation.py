@@ -14,6 +14,7 @@ import json
 
 import numpy as np
 
+from mujoco_tools.paths import relocated_checkpoint_path
 from .translation_probe import forward_kinematics, sha256, write_json
 
 
@@ -77,7 +78,7 @@ def run(source, output):
     for condition in CONDITIONS:
         paths += [source/'scenes/pos2'/f'{condition}{ext}' for ext in ('.npz', '.json', '.xml')]
         paths += [source/'episodes'/m/condition/'trace.npz' for m in ('act', 'diffusion')]
-    checkpoint = Path(summary['episodes']['diffusion']['baseline']['policy']['checkpoint'])
+    checkpoint = relocated_checkpoint_path(summary['episodes']['diffusion']['baseline']['policy']['checkpoint'])
     paths += [p for p in checkpoint.iterdir() if p.is_file()]
     protected = {str(p): sha256(p) for p in paths}
     manifest = dict(created_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(),

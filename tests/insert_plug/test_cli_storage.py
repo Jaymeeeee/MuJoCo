@@ -160,8 +160,9 @@ def test_existing_episode_directory_is_never_reused(short_collection):
     assert list(output.iterdir()) == [original]
 
 
-def test_default_scene_and_dataset_locations_are_separate(monkeypatch):
-    expected = WORKSPACE_ROOT / "outputs" / "datasets" / "insert_plug"
+def test_default_scene_and_dataset_locations_are_separate(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    expected = WORKSPACE_ROOT / "datasets" / "insert_plug"
     for command in ("demo", "collect"):
         args = SimpleNamespace(command=command, no_images=False)
         assert cli._default_output(args).parent == expected

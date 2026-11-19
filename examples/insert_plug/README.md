@@ -19,7 +19,7 @@ examples/insert_plug/
 
 日常仿真仍使用 `python -m examples.insert_plug`；批量工具使用下文的模块入口。共享配置、资产和输出继续放在工作区顶层。
 
-训练目录名使用 `<model>_insert_plug_<version>_<rgb|rgbd>_<训练时间>`；`outputs/test/` 下的批测目录再加 `ind` / `ood`，末尾使用该次测试的启动时间（`Asia/Shanghai`，`YYYYmmdd_HHMMSS`）。不在目录名中重复 batch size、workers、checkpoint 步数或执行长度。`policy.evaluate` 省略 `--output` 时自动命名；未知布局需显式 `--split ind/ood` 或 `--output`。历史日志和 checkpoint 内保存的原配置保持不变，当前路径与历史校验值的对应关系见[迁移清单](../../outputs/_checks/output_naming_20261112/manifest.json)。
+训练运行保存在 `outputs/train/<模型>_insert_plug_<版本>_<rgb或rgbd>_<训练时间>/`。批量评测保存在 `outputs/test/<模型>_insert_plug_<版本>_<rgb或rgbd>/<ind或ood>/<评测时间>/`。例如 `act_insert_plug_v2_rgbd/ind/20261112_191102/` 是一次 ACT 分布内评测。同一模型的多次评测按启动时间区分，时间格式为上海时间 `YYYYmmdd_HHMMSS`。`policy.evaluate` 省略 `--output` 时会生成此路径，未知布局可用 `--split ind` 或 `--split ood` 指定划分。ACT 与 Diffusion 的联合汇总放在 `act_diffusion_…` 组下，同一份汇总覆盖两种划分时使用 `ind_ood/`。
 
 注意力、相机消融、平移诊断与报告分别保存在 `outputs/insert_plug/` 的四个类别目录。实验名包含模型、任务版本、模态、适用的 ind/ood、必要实验类型和时间；具体 seed、checkpoint 步数、执行长度等仍存于元数据。ACT 注意力用 `chunked` / `ensemble`，相机消融用 `ensemble` / `stateless`，旧预测的重新统计另标 `stateless_reanalysis`。新默认名称与报告使用同一次上海时间 `started_at`；未知坐标不标 ind/ood，无法确认版本或模态时显式指定 `--output`。旧实验日期来源及完整映射见[实验迁移清单](../../outputs/_checks/insert_plug_naming_20261112/manifest.json)。
 
@@ -27,6 +27,7 @@ examples/insert_plug/
 |---|---|
 | 场景与物理参数 | `config/insert_plug.yaml` |
 | 10 组已验证的 2 cm 网格位置 | `config/insert_plug_positions.yaml` |
+| v2 的 100 对已验证方环位置 | `config/insert_plug_positions_v2.yaml` |
 | FR3 模型与许可证 | `assets/robots/franka_fr3/` |
 | Robotiq 模型与许可证 | `assets/grippers/robotiq_2f85/` |
 | 原始零件网格 | `assets/放置桶.STL`、`assets/螺栓.STL` |
@@ -38,10 +39,14 @@ examples/insert_plug/
 | 轨迹规划、专家与执行检查 | `examples/insert_plug/control/` |
 | 仿真接口 | `examples/insert_plug/environment/simulation.py` |
 | 本场景数据格式与视频回放 | `examples/insert_plug/data/dataset.py`、`examples/insert_plug/data/replay.py` |
-| 本批次采集数据（每条 HDF5、YAML、XML、第三视角 MP4） | `outputs/datasets/insert_plug_v1/pos0`～`pos9` |
-| 本批次合并后的 LeRobot v3 数据集 | `outputs/datasets/insert_plug_v1/lerobot/` |
+| v1 采集数据（每条 HDF5、YAML、XML、第三视角 MP4） | `datasets/insert_plug_v1/pos0`～`pos9` |
+| v1 合并后的 LeRobot v3 数据集 | `datasets/insert_plug_v1/lerobot/` |
+| v2 采集数据（100 对位置各一条，同样四文件格式） | `datasets/insert_plug_v2/bags/episode_000001`～`episode_000100` |
+| v2 合并后的 LeRobot v3 数据集 | `datasets/insert_plug_v2/lerobot/` |
 | LeRobot 转换入口与 ACT 输入配置 | `examples/insert_plug/data/export_lerobot.py`、`config/act_insert_plug_features.json` |
 | 按需生成的图片、视频、计划导出 | `outputs/insert_plug/` |
+
+v2 使用以 `(0.45, -0.07)` 和 `(0.45, 0.07)` 为中心的两个 11 cm 正方形，各自扣除中央含边界的 4 cm 正方形作为 OOD 留空区。每个方环分为 100 个等面积采样层，各取一点，初始点和目标点独立采样后打乱配对。100 对布局全部通过专家预检，未替换点位或配对。保留 10 Hz 控制/记录、1 kHz 物理和双路 256×256 RGB-D；新范围的实际轨迹为 18.4–20.4 秒，不沿用 v1 全部小于 20 秒的结论。采集入口为 `data.collect_ring_dataset`，完整视频和动作物理回放审计入口为 `diagnostics.audit_ring_dataset --replay`；两者均以 Python 模块运行。数据目录旁保存冻结位置表和位置分布图，审计报告在 `outputs/_checks/insert_plug_v2_collection/`。v2 已完成下述 LeRobot 转换，并已在 `mujoco:act_v2_rgbd` 启动 ACT RGB-D 训练；运行目录为 `outputs/train/act_insert_plug_v2_rgbd_20261112_161655/`，目标30,000步，完成状态以训练日志和 checkpoint 为准。
 
 需要专项检查时，可用以下入口的 `--help` 查看参数；检查结果放在 `outputs/_checks/`：
 
@@ -78,14 +83,14 @@ python -m examples.insert_plug plan --output outputs/insert_plug/plans
 python -m examples.insert_plug demo --backend glfw --viewer --realtime
 
 # 先规划检查，再执行并保存 512×512 双相机观测与视频
-python -m examples.insert_plug demo --backend egl --width 512 --output outputs/datasets/insert_plug/under20_demo --video
+python -m examples.insert_plug demo --backend egl --width 512 --output datasets/insert_plug/under20_demo --video
 
 # 无图像物理检查；产物属于可自动清理的临时结果
 python -m examples.insert_plug demo --no-images
 
 # 按当前固定底座位置采集 10 条，每条默认附带第三视角 MP4
 python -m examples.insert_plug collect --backend egl --episodes 10 --randomize-mm 0 \
-  --output outputs/datasets/insert_plug/under20_fixed_v1
+  --output datasets/insert_plug/under20_fixed_v1
 
 # 需要随机孔位时显式设置随机范围
 python -m examples.insert_plug collect --backend egl --episodes 10 --seed 200 --randomize-mm 2
@@ -94,13 +99,13 @@ python -m examples.insert_plug collect --backend egl --episodes 10 --seed 200 --
 `--width 128` 可降低两路相机分辨率，默认各 256×256。记录频率由 `config/insert_plug.yaml` 的 `recording.sample_hz` 或 `--sample-hz` 设置，默认 10 Hz。`--control-hz` 独立设置专家控制频率，默认也为 10 Hz，并须整除物理频率；默认物理步长为 1 ms。每次控制指令在 100 个物理步内保持恒定，即 100 ms。没有桌面显示的环境不要使用 `--viewer`；GPU 不可用时可指定 `--backend osmesa`。
 
 ```bash
-python -m examples.insert_plug validate outputs/datasets/insert_plug_v1/pos0/episode_000000/episode_000000.h5
-python -m examples.insert_plug preview outputs/datasets/insert_plug_v1/pos0/episode_000000/episode_000000.h5 --output outputs/insert_plug/replay.mp4
+python -m examples.insert_plug validate datasets/insert_plug_v1/pos0/episode_000000/episode_000000.h5
+python -m examples.insert_plug preview datasets/insert_plug_v1/pos0/episode_000000/episode_000000.h5 --output outputs/insert_plug/replay.mp4
 ```
 
 每条记录默认生成同名 `.mp4`，只包含第三视角 `head` RGB，以 HDF5 的采样频率播放（默认 10 fps），不叠字、不缩放，帧数与 HDF5 一致。带 `--video` 的上述命令还会额外将双视角视频另存到 `outputs/insert_plug/previews/under20_demo/preview.mp4`。额外视频左侧为 Head (third-person)，右侧为 Wrist；独立黑色页眉显示相机名称、记录的仿真时间和当前阶段。已有 episode 和视频不会覆盖，也不会随当前配置自动更新；重复执行这条命令请改用新的输出目录。
 
-省略 `--output` 时，`demo` 与 `collect` 都保存到 `outputs/datasets/insert_plug/run_<时间>/`；指定 `--output` 时使用该批次目录。每个 episode 必须放在独立的 `episode_<seed>/` 子目录中，内部保留同名 `.h5`、`.yaml`、`.xml`、`.mp4` 四个文件。历史 15 Hz 固定位置测试批的原始保存路径为 `outputs/datasets/insert_plug/test/`，结构如下：
+省略 `--output` 时，`demo` 与 `collect` 都保存到仓库根目录下的 `datasets/insert_plug/run_<时间>/`；指定 `--output` 时使用该批次目录。每个 episode 必须放在独立的 `episode_<seed>/` 子目录中，内部保留同名 `.h5`、`.yaml`、`.xml`、`.mp4` 四个文件。历史 15 Hz 固定位置测试批的原始保存路径为 `outputs/datasets/insert_plug/test/`，结构如下：
 
 ```text
 test/
@@ -119,6 +124,41 @@ test/
 
 `examples/insert_plug/scene.xml` 是当前配置生成的场景；修改配置后可用 `build` 更新。采集记录中的 `episode_<seed>.xml` 是该次运行的场景快照，配套 YAML 保存本次参数，包括随机化的底座位置。HDF5 中 `model_path` 与 `execution_result.model` 保存该 XML 的相对文件名，以 HDF5 所在的 episode 目录为基准，便于整体移动记录。XML 仍引用共享 `assets/`，重建仿真时需要这些资源。`view` 和静态预览按当前配置构建场景，不会改写历史 episode。
 
+## 1 kHz 力矩与 10 Hz RGB-D 采集
+
+`data.collect_torque_dataset` 为现有 v2 的 100 组 InD 方环布局重新执行专家轨迹。专家关节目标仍为 10 Hz，物理仍为 1 kHz；力矩记录不参与控制，也不修改机器人模型和接触参数。默认输出为 `datasets/insert_plug_torque/bags/episode_000001`～`episode_000100`，每条保留同名 HDF5、YAML、XML 和 head 相机 MP4。
+
+2026-11-16 的首批已完成：100/100 成功，19,072 帧双相机 RGB-D、1,907,200 个力矩采样，400 个 episode 文件共约 10.70 GB。全量视频解码、时序/信号重算和两种频率的动作物理回放均通过，高频状态与回放逐项一致。数据集父目录的 `DATASET_INFO.txt`、`signal_schema.json`、`dataset_summary.json`、`validation_report.json` 和 `SHA256SUMS` 保存说明、字段定义、汇总及校验结果。原有 v1/v2 数据保持不变。
+
+另采一批时，用新的批次名指定输出目录，例如：
+
+```bash
+conda activate mujoco
+cd ~/Projects/MuJoCo
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 LP_NUM_THREADS=1 \
+  python -m examples.insert_plug.data.collect_torque_dataset \
+  --output datasets/insert_plug_torque_run02/bags --workers 8 --backend osmesa
+```
+
+可用 `--episode 1` 先在独立输出目录试采一条。续采只接受配置、采集源码指纹及完整性检查均相同的已完成 episode；遇到不完整或不同版本的记录会保留并报错。数据集父目录保存冻结布局、源码校验值和批次报告。
+
+HDF5 原有图像、深度、状态和动作按 10 Hz 保存；新增 `torque/` 组以 1 kHz 保存独立时间轴，区间为 `[0, T)`，每条记录在物理积分前、当前控制目标已设置后采样。`alignment/image_to_torque_index` 将每张图像映射到同一时刻的力矩样本；一张图像对应随后 100 个物理采样，最后一帧同样覆盖完整 100 ms。
+
+| HDF5 中 `torque/` 下的字段 | 维度 | 含义 |
+|---|---:|---|
+| `joint_torque_measured_sim` | 7 | 理想仿真连杆侧等效驱动力矩，含重力补偿重表达及转子惯量修正 |
+| `joint_external_torque_raw` / `joint_external_torque_estimated` | 各 7 | 动力学残差及其 30 Hz 因果低通滤波结果 |
+| `ee_external_wrench_tcp_estimated` / `ee_external_wrench_world_estimated` | 各 6 | 同一 TCP 参考点的六维估计，以 TCP / 世界坐标表达，顺序为力 XYZ、力矩 XYZ |
+| `joint_pd_torque_unclipped` / `joint_actuator_torque` | 各 7 | 限幅前 PD 期望输出 / 仿真实际执行器输出 |
+| `finger_normal_force` | 2 | 左右夹指与插销接触的法向力之和，单位 N |
+| `finger_contact_force_world` / `finger_contact_force_tcp` | 各 2×3 | 插销施加于左右夹指的三维接触合力 |
+
+同组还保存全系统 `qpos/qvel/qacc/ctrl`、关节状态、TCP 位姿、雅可比、当前动作/阶段、滤波系数、估计条件标志及独立接触真值。力矩单位为 N·m；外力矩/六维估计采用“机器人作用于环境”的符号，夹指力采用“插销作用于夹指”的符号。元数据记录完整公式、模型参数、参考点与坐标约定。
+
+这些量与真机字段只对应信号用途：虚拟测量不是校准后的 `tau_J`，PD 输出不自动等于 `tau_J_d`。估计器使用精确仿真模型与同步加速度，没有硬件噪声，也不是 Franka 内部观察器。六维量由关节外力矩估计经带尺度和阻尼的雅可比最小二乘得到；机械臂中段接触、关节限位或病态雅可比会影响末端受力解释，需检查保存的接触类型与条件标志。左右夹指接触力和 `*_gt` 字段是仿真诊断真值，不默认代表真机配置具有对应传感器。
+
+只读审计入口为 `python -m examples.insert_plug.diagnostics.audit_torque_dataset --help`；审计验证两个时间轴、状态/动作对齐、力矩残差和滤波、坐标变换、场景配置及视频，`--replay` 另外用保存动作重新执行物理以检查记录是否扰动了轨迹。
+
 ## 网格位置批量采集
 
 批量布局在 `config/insert_plug_positions.yaml` 中定义，包含基础配置路径及 SHA256、2 cm 网格间距、10 组 `source_xy`/`target_xy` 和整数偏移 `source_steps`/`target_steps`。当前选择范围为相对于基准位置的每轴 ±4 cm，各组源底座和目标底座的位置都分别唯一；每个位置内部固定采集 10 条，不加连续随机扰动。
@@ -128,23 +168,23 @@ test/
 ```bash
 # 10 组位置，每组 10 条，控制/记录均为 10 Hz、双路 RGB-D、第三视角 MP4
 python -m examples.insert_plug.data.collect_positions --workers 3 \
-  --output outputs/datasets/insert_plug_v1
+  --output datasets/insert_plug_v1
 
 # 可单独选择某组；重复运行会校验并跳过同配置的成功记录
 python -m examples.insert_plug.data.collect_positions --position pos0 --workers 1 \
-  --output outputs/datasets/insert_plug_v1
+  --output datasets/insert_plug_v1
 
 # 整批完成后，检查位置、频率、深度、动作时序、视频及每条时长严格小于 20 秒
 python -m examples.insert_plug.diagnostics.audit_batch --positions-config config/insert_plug_positions.yaml \
-  --root outputs/datasets/insert_plug_v1 --sample-hz 10 --control-hz 10 --max-duration-s 20
+  --root datasets/insert_plug_v1 --sample-hz 10 --control-hz 10 --max-duration-s 20
 ```
 
-本次新批次已在 `outputs/datasets/insert_plug_v1/pos0`～`pos9` 各采集 10 条，**100/100 成功，共 18,990 帧、400 个原始文件，6,549,365,746 字节（约 6.55 GB）**。完整任务时长 **18.6–19.7 秒，平均 18.99 秒**，全部通过严格 `<20s` 的[原始数据审计](../../outputs/_checks/insert_plug_under20_collection/raw_audit.json)。本次使用 OSMesa CPU 渲染，记录 256×256 双路 RGB-D；控制和记录均为 10 Hz，物理为 1 kHz。转换后的 `lerobot/` 与各位置目录并列。
+本次新批次已在 `datasets/insert_plug_v1/pos0`～`pos9` 各采集 10 条，**100/100 成功，共 18,990 帧、400 个原始文件，6,549,365,746 字节（约 6.55 GB）**。完整任务时长 **18.6–19.7 秒，平均 18.99 秒**，全部通过严格 `<20s` 的[原始数据审计](../../outputs/_checks/insert_plug_under20_collection/raw_audit.json)。本次使用 OSMesa CPU 渲染，记录 256×256 双路 RGB-D；控制和记录均为 10 Hz，物理为 1 kHz。转换后的 `lerobot/` 与各位置目录并列。
 
 先前专家的历史批次位于原始保存路径 `outputs/datasets/insert_plug/`，不随代码克隆迁移；其 100 条记录采用 10 Hz 控制、10 Hz 记录、1 kHz 物理，并曾替换更早的 50 Hz 控制／10 Hz 记录批次。该历史批次 **100/100 条成功，共 38,410 帧、400 个文件，约 13.64 GB**，采集时通过整批独立审计和保存动作物理回放；初始和最终视觉网格的画面边缘最小余量为 51.694 px。这些历史统计与本次新批次分别保存。本次原始记录结构为：
 
 ```text
-outputs/datasets/insert_plug_v1/
+datasets/insert_plug_v1/
 ├── pos0/
 │   ├── episode_000000/
 │   │   ├── episode_000000.h5
@@ -160,7 +200,7 @@ outputs/datasets/insert_plug_v1/
 └── lerobot/                   # 本批次转换后的 LeRobot v3 数据集
 ```
 
-`pos{i}` 使用全局编号 `i*10` 至 `i*10+9`。本批次直接使用 `outputs/datasets/insert_plug_v1/`，不添加中间目录。基础配置和批量清单的控制、记录频率均为 10 Hz，批量采集开启两路深度；原 `test/` 中的历史 15 Hz 记录保持原样。每条 HDF5 和 YAML 都保存本次实际配置与所属位置；每条动作在采样时生效，并保持至 100 ms 后的下一次观测。
+`pos{i}` 使用全局编号 `i*10` 至 `i*10+9`。本批次直接使用 `datasets/insert_plug_v1/`，不添加中间目录。基础配置和批量清单的控制、记录频率均为 10 Hz，批量采集开启两路深度；原 `test/` 中的历史 15 Hz 记录保持原样。每条 HDF5 和 YAML 都保存本次实际配置与所属位置；每条动作在采样时生效，并保持至 100 ms 后的下一次观测。
 
 无 GPU/EGL 渲染时，可在采集命令中添加 `--backend osmesa`，使用 CPU 无窗口渲染；数据格式和仿真频率相同。
 
@@ -170,7 +210,7 @@ outputs/datasets/insert_plug_v1/
 
 ```bash
 python -m examples.insert_plug.environment.layouts --config config/insert_plug.yaml --output config/insert_plug_positions_new.yaml
-python -m examples.insert_plug.data.collect_positions --positions-config config/insert_plug_positions_new.yaml --output outputs/datasets/insert_plug/new_positions --workers 3
+python -m examples.insert_plug.data.collect_positions --positions-config config/insert_plug_positions_new.yaml --output datasets/insert_plug/new_positions --workers 3
 ```
 
 布局生成器默认不覆盖已有清单；`--position` 可重复指定以选择多个位置。后续新批次完成后，可通过下述独立转换步骤合并为 LeRobotDataset，原始四类文件仍保留。
@@ -182,11 +222,11 @@ python -m examples.insert_plug.data.collect_positions --positions-config config/
 ```bash
 conda activate mujoco
 env -u PYTHONPATH python -m examples.insert_plug.diagnostics.check_action_replay \
-  --root outputs/datasets/insert_plug_v1
+  --root datasets/insert_plug_v1
 
 # 可用 --episode 选择单条，重复该参数可选择多条
 env -u PYTHONPATH python -m examples.insert_plug.diagnostics.check_action_replay \
-  --episode outputs/datasets/insert_plug_v1/pos0/episode_000000/episode_000000.h5 \
+  --episode datasets/insert_plug_v1/pos0/episode_000000/episode_000000.h5 \
   --workers 1
 ```
 
@@ -314,7 +354,9 @@ env -u PYTHONPATH python -m examples.insert_plug.diagnostics.check_action_replay
 
 ### LeRobot 转换与 ACT 输入
 
-本次转换已完成，目录为 **`outputs/datasets/insert_plug_v1/lerobot/`**，使用共享 `mujoco` 环境内的本地 **LeRobot 0.7.1** 写入 v3 格式：**100 条、18,990 帧、10 Hz，108 个文件，5,708,651,034 字节（约 5.71 GB）**。全部 18,990 帧的双路深度逐位一致，动作与状态匹配源 float32 数值，原始时间戳和阶段完全一致；动作转换无损。官方 reader 检查 300 个样本，发布目录另检查 12 个样本，均通过。RGB 使用有损 H.264，本次抽检最坏平均绝对误差为 1.319（0–255）。见[转换验证](../../outputs/datasets/insert_plug_v1/lerobot/meta/export_validation.json)与[本批次总报告](../../outputs/_checks/insert_plug_under20_collection/summary.json)。原始记录保持完整；后续 ACT 与 Diffusion 均已完成 30,000 步，详见[工作区训练状态](../../README.md#训练-diffusion)。
+v2 转换已完成于 **`datasets/insert_plug_v2/lerobot/`**，使用共享 `mujoco` 环境内的 LeRobot 0.7.1 写入标准 v3 格式：**100 条、19,072 帧、10 Hz，108 个文件，5,883,660,250 字节（约 5.48 GiB）**。全部双路深度像素与原始记录逐位一致；动作、状态、时间戳和阶段逐帧校验通过，动作 float32 转换无损。官方读取器检查 300 个样本，正式目录另检查 12 个样本，均通过。RGB 使用 H.264，抽检最坏平均绝对误差为 1.398（0–255）。见[转换验证](../../datasets/insert_plug_v2/lerobot/meta/export_validation.json)。原始 `bags/episode_000001`～`episode_000100` 对应 LeRobot 的 `episode_index=0..99`；原始编号 `1..100` 保存在 `source.episode_index`，位置编号 `0..99` 保存在 `source.position_id`。
+
+v1 转换已完成，目录为 **`datasets/insert_plug_v1/lerobot/`**，使用共享 `mujoco` 环境内的本地 **LeRobot 0.7.1** 写入 v3 格式：**100 条、18,990 帧、10 Hz，108 个文件，5,708,651,034 字节（约 5.71 GB）**。全部 18,990 帧的双路深度逐位一致，动作与状态匹配源 float32 数值，原始时间戳和阶段完全一致；动作转换无损。官方 reader 检查 300 个样本，发布目录另检查 12 个样本，均通过。RGB 使用有损 H.264，本次抽检最坏平均绝对误差为 1.319（0–255）。见[转换验证](../../datasets/insert_plug_v1/lerobot/meta/export_validation.json)与[本批次总报告](../../outputs/_checks/insert_plug_under20_collection/summary.json)。原始记录保持完整；后续 ACT 与 Diffusion 均已完成 30,000 步，详见[工作区训练状态](../../README.md#训练-diffusion)。
 
 先前专家历史转换的原始保存路径为 `outputs/datasets/insert_plug/lerobot/`，包含 **100 条、38,410 帧、10 Hz，约 11.65 GB**，保持原样。它此前替换的是更早的 50 Hz 控制批次，不会因为本次专家优化再次删除或更新。该历史转换的全部动作、状态、时间戳、阶段及深度像素逐帧校验通过，动作 float32 转换无损，最终目录也已通过官方读取器验证。该历史转换使用官方 **LeRobot 0.7.0** 的 `LeRobotDataset.create/add_frame/save_episode/finalize` API，写入 [LeRobot v3 格式](https://huggingface.co/docs/lerobot/lerobot-dataset-v3)，仅在本机保存。源 HDF5 保留完整仿真状态和逐帧重建腕部外参所需的信息。
 
@@ -344,11 +386,12 @@ conda activate mujoco
 cd ~/Projects/MuJoCo
 # 本批次已完成转换；以下为复现命令，重做时须将 --output 改为尚不存在的新目录
 python -m examples.insert_plug.data.export_lerobot \
-  --source-root outputs/datasets/insert_plug_v1 \
-  --output outputs/datasets/insert_plug_v1/lerobot
+  --source-root datasets/insert_plug_v2/bags \
+  --source-layout flat --expected-episodes 100 \
+  --output datasets/insert_plug_v2/lerobot
 ```
 
-转换逐帧读取原始 HDF5，先写 `.partial` 目录，校验后发布；已有目标目录不会覆盖。默认只扫描指定根目录下的 `pos0` 至 `pos9`，不混入旧 `test/` 数据。下面读取的是本次新批次：
+转换逐帧读取原始 HDF5，先写 `.partial` 目录，校验后发布；已有目标目录不会覆盖。默认 `--source-layout positions` 只扫描指定根目录下的 `pos0` 至 `pos9`，不混入旧 `test/` 数据；v2 使用 `--source-layout flat` 读取平铺 episode 目录，逐条核对四文件完整性和 HDF5 来源编号。下面读取 v2：
 
 ```python
 from pathlib import Path
@@ -356,12 +399,12 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 dataset = LeRobotDataset(
     "local/insert_plug",
-    root=Path("outputs/datasets/insert_plug_v1/lerobot"),
+    root=Path("datasets/insert_plug_v2/lerobot"),
     video_backend="pyav",
     depth_output_unit="m",
 )
 frame = dataset[0]
-print(dataset.num_episodes, dataset.num_frames)  # 100, 18990
+print(dataset.num_episodes, dataset.num_frames)  # 100, 19072
 print(frame["observation.depth.head"].shape)      # [1, 256, 256]
 ```
 
@@ -384,7 +427,22 @@ config = ACTConfig(input_features=features("input_features"),
 policy = make_policy(config, ds_meta=dataset.meta)  # 仅初始化，尚未训练
 ```
 
-转换、训练和部署均使用统一的 `mujoco` 环境及本地 `third_party/lerobot[training,diffusion]`；上述初始化示例显式选择 CPU，也可按需使用 CUDA。训练入口与完整 ACT 命令见[工作区训练说明](../../README.md#训练-act)。深度单独完整保存，但上述标准 ACT 输入配置只使用 RGB 和机器人状态；将来训练 RGB-D 模型需要另外接入深度编码。当前数据的策略动作、专家控制和记录均为 10 Hz，转换保留实际执行的 float32 控制数值。部署时每个策略动作调用一次 `Simulation.step(action)`，在 1 kHz 物理循环中恒定保持 100 ms，再获取下一次观测；部署效果仍需独立仿真验证。
+转换、训练和部署均使用统一的 `mujoco` 环境及本地 `third_party/lerobot[training,diffusion]`；上述初始化示例显式选择 CPU，也可按需使用 CUDA。深度单独完整保存，但上述标准 ACT 输入配置只使用 RGB 和机器人状态；将来训练 RGB-D 模型需要另外接入深度编码。当前数据的策略动作、专家控制和记录均为 10 Hz，转换保留实际执行的 float32 控制数值。部署时每个策略动作调用一次 `Simulation.step(action)`，在 1 kHz 物理循环中恒定保持 100 ms，再获取下一次观测；部署效果仍需独立仿真验证。
+
+### 训练 ACT
+
+在仓库根目录复用已保存的 v1 RGB 配置，给新一轮训练指定独立目录。
+
+```bash
+run_name="act_insert_plug_v1_rgb_$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S)"
+lerobot-train \
+  --config_path=outputs/train/act_insert_plug_v1_rgb_20261108_154950/train_config.json \
+  --output_dir="outputs/train/$run_name" --job_name="$run_name"
+```
+
+训练模型保存在 `outputs/train/<训练批次>/checkpoints/<步数>/`。其中 `pretrained_model/` 用于推理，续训还需要同一步的 `training_state/`。
+
+续训迁移前保存的模型时，用 `--resume=true`，将 `--config_path` 指向该步的 `pretrained_model/train_config.json`，并显式传入当前的 `--dataset.root` 和实验目录 `--output_dir`。这样会从保存的步数继续，后续 checkpoint 写入指定实验目录。
 
 ### 每条轨迹的长度与空间占用
 
@@ -392,15 +450,43 @@ policy = make_policy(config, ds_meta=dataset.meta)  # 仅初始化，尚未训�
 
 先前专家的历史批次每条 37.7–39.4 秒、377–394 帧，合计 38,410 帧；原始四文件记录合计 13,640,790,169 字节（约 13.64 GB），对应 LeRobot 数据约 11.65 GB。这些历史大小不适用于本次新批次。
 
+## v2 ACT 区域评测
+
+v2 的 InD/OOD 按区域划分：源点和目标点分别以 `(0.45, -0.07)`、`(0.45, 0.07)` 为中心。InD 为边长 11 cm 的外正方形扣除闭合的中央 4 cm 正方形；OOD 为这两个中央正方形。InD 重新采用训练时的等面积环带分层采样，OOD 独立均匀采样两块中央区域。各固定 100 个新位置对，每对只测试一次，不复用训练位置，也不按策略或专家结果筛选、替换位置。
+
+```bash
+conda activate mujoco
+python -m examples.insert_plug.policy.evaluate_regions_v2 \
+  --checkpoint outputs/train/act_insert_plug_v2_rgbd_20261112_161655/checkpoints/030000/pretrained_model \
+  --workers 4 --backend egl --device cuda
+```
+
+该入口使用两个相互独立的 `outputs/test/act_insert_plug_v2_rgbd/<ind|ood>/<timestamp>/` 目录，先冻结坐标、checkpoint 和运行源码哈希，然后交替调度两组试验。保持训练的 `chunk_size=64`，每次执行 32 个动作，不启用时序集成；10 Hz 控制、1 kHz 物理、最长 60 秒，成功仍要求实际插入、松爪、撤离后持续稳定 250 ms。普通接触保留，附加接触诊断关闭。每条试验保存场景 XML、head/wrist 双视角视频和结果；最终完整解码视频并输出 `summary.json`、`episodes.csv`、`audit.json`。物理失败和运行异常分别计数，成功率分母固定为各 100 次。
+
+`--prepare-only` 只冻结清单；使用 `--resume --ind-output <目录> --ood-output <目录>` 可继续未开始的试验，必须保持原 worker 数、设备、后端和源码。已经结束或中断的试验不自动重试，已有结果不会覆盖。`--audit-only` 重新检查已有证据。坐标与结果图通过 `python -m examples.insert_plug.policy.plot_regions_v2 --ind-output <目录> --ood-output <目录> --output <图片目录>` 生成；绘图需要安装 NumPy、PyYAML 和 matplotlib 的 Python 环境。
+
+DiT Diffusion 使用独立入口，直接复制已完成 ACT 评测的两份位置清单和场景快照，以同样的 200 组位置、种子和物理判据比较：
+
+```bash
+python -m examples.insert_plug.policy.evaluate_dit_regions_v2 \
+  --checkpoint outputs/train/diffusion_dit_insert_plug_v2_rgbd_20261112_175725/checkpoints/030000/pretrained_model \
+  --reference-ind-output outputs/test/act_insert_plug_v2_rgbd/ind/20261112_191102 \
+  --reference-ood-output outputs/test/act_insert_plug_v2_rgbd/ood/20261112_191102 \
+  --workers 4 --backend egl --device cuda
+```
+
+该入口要求配置明确为 `type=diffusion`、`denoiser_type=dit`，保留训练的 `horizon=64`、`n_obs_steps=1` 和 DDPM 100 步去噪，运行时每次执行 32 个动作。每条试验在模型初始化之后重设随机种子，重置策略队列和处理器；两种模型使用相同种子编号，并不表示其内部随机数流相同。输出使用独立的 `diffusion_dit_insert_plug_v2_rgbd_<ind|ood>_<timestamp>/` 目录，保留引用清单、模型和源码的哈希。绘图时追加 `--policy-label 'DiT Diffusion v2 RGB-D'`。
+
 ## ACT 策略部署
 
 ```bash
 conda activate mujoco
 cd ~/Projects/MuJoCo
-python -m examples.insert_plug rollout --viewer --realtime
+python -m examples.insert_plug rollout --viewer --realtime \
+  --checkpoint outputs/train/act_insert_plug_v1_rgb_20261108_154950/checkpoints/030000
 ```
 
-`config/insert_plug_policy.yaml` 默认指向 `outputs/train/act_insert_plug_20261107_2044/artifacts/checkpoints/030000`，使用 pos0、10 Hz、每次执行 50 个预测动作、最长 60 秒。更换 checkpoint 修改此 YAML 或传 `--checkpoint`，接受训练步目录及 `pretrained_model/` 两种形式。YAML 中相对路径以工作区根目录为基准，命令行 `--output` 相对当前目录。
+`config/insert_plug_policy.yaml` 默认指向 `outputs/train/act_insert_plug_20261107_2044/checkpoints/030000`，使用 pos0、10 Hz、每次执行 50 个预测动作、最长 60 秒。当前工作区没有这次旧运行的权重。使用上述 v1 RGB 模型时，可将它的路径写入此 YAML，或像示例一样传入 `--checkpoint`。支持训练步目录及 `pretrained_model/` 两种形式。YAML 中相对路径以工作区根目录为基准，命令行 `--output` 相对当前目录。
 
 ```bash
 # 服务器 / 无桌面运行；默认输出 head | wrist 双视角 MP4
@@ -445,7 +531,7 @@ sim.step(action)  # 一次 100 ms；持续循环直到成功、超时或异常
 
 ```bash
 python -m examples.insert_plug rollout \
-  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/artifacts/checkpoints/030000 \
+  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/checkpoints/030000 \
   --position 0 --n-action-steps 32 --device cuda --backend egl --duration 60
 ```
 
@@ -454,13 +540,14 @@ python -m examples.insert_plug rollout \
 十位置各十次的完整测试仍使用现有批量入口，结果按 pos0–pos9 保存：
 
 ```bash
+batch="outputs/test/diffusion_insert_plug_v1_rgb/ind/$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S)"
 python -m examples.insert_plug.policy.evaluate \
-  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/artifacts/checkpoints/030000 \
-  --output outputs/test/diffusion_insert_plug_v1_rgb_ind_20261109_001724 \
+  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/checkpoints/030000 \
+  --output "$batch" \
   --n-action-steps 32 --device cuda --backend egl --workers 10 --duration 60
 python -m examples.insert_plug.policy.summarize \
-  --root outputs/test/diffusion_insert_plug_v1_rgb_ind_20261109_001724 \
-  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/artifacts/checkpoints/030000 \
+  --root "$batch" \
+  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/checkpoints/030000 \
   --n-action-steps 32 --duration 60 --video-check full --write
 ```
 
@@ -481,7 +568,7 @@ python -m examples.insert_plug.policy.summarize \
 | pos8 | 8/10 |
 | pos9 | 10/10 |
 
-成功轨迹平均 19.30 秒，范围 17.8–50.5 秒；整批累计 2,378.1 秒仿真。100 条视频共 23,881 帧全部完整解码，所有报告及实际模型配置审计通过，7 个 checkpoint 文件和 3 个源配置哈希保持不变。相关 183 项测试通过。[完整汇总](../../outputs/test/diffusion_insert_plug_v1_rgb_ind_20261109_001724/summary.json)、[逐条 CSV](../../outputs/test/diffusion_insert_plug_v1_rgb_ind_20261109_001724/episodes.csv)和[成功视频示例](../../outputs/test/diffusion_insert_plug_v1_rgb_ind_20261109_001724/pos0/episode_000000/rollout.mp4)保存在测试目录。保留全部失败视频；关闭接触诊断不表示零接触。
+成功轨迹平均 19.30 秒，范围 17.8–50.5 秒；整批累计 2,378.1 秒仿真。100 条视频共 23,881 帧全部完整解码，所有报告及实际模型配置审计通过，7 个 checkpoint 文件和 3 个源配置哈希保持不变。相关 183 项测试通过。[完整汇总](../../outputs/test/diffusion_insert_plug_v1_rgb/ind/20261109_001724/summary.json)、[逐条 CSV](../../outputs/test/diffusion_insert_plug_v1_rgb/ind/20261109_001724/episodes.csv)和[成功视频示例](../../outputs/test/diffusion_insert_plug_v1_rgb/ind/20261109_001724/pos0/episode_000000/rollout.mp4)保存在测试目录。保留全部失败视频；关闭接触诊断不表示零接触。
 
 ### 未见位置对的 ACT / Diffusion 对比
 
@@ -497,14 +584,13 @@ python -m examples.insert_plug.policy.summarize \
 
 ```bash
 python -m examples.insert_plug.policy.compare_generalization \
-  --act-checkpoint outputs/train/act_insert_plug_v1_rgb_20261108_154950/artifacts/checkpoints/030000 \
-  --diffusion-checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/artifacts/checkpoints/030000 \
+  --act-checkpoint outputs/train/act_insert_plug_v1_rgb_20261108_154950/checkpoints/030000 \
+  --diffusion-checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/checkpoints/030000 \
   --positions-config config/insert_plug_generalization_v1.yaml \
-  --output "outputs/test/act_diffusion_insert_plug_v1_rgb_ood_$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S)" \
   --n-action-steps 32 --duration 60 --workers 4 --device cuda --backend egl
 ```
 
-`--workers 4` 是两种模型共同使用的一个进程并发限额，全部作业共用调度池。输出默认分为 `act/` 和 `diffusion/`，各自按 `pos*/episode_*/` 保留每条报告、场景 XML 和双视角视频；也可分别用 `--act-output`、`--diffusion-output` 指定新的批次目录。入口结束前会审计全部逐条报告、实际配置及来源/checkpoint 哈希，并完整解码双方全部视频，然后生成各模型的 `summary.json`、`episodes.csv`，以及对比目录中的 `summary.json`、`positions.csv` 和 `comparison_config.json`。以 `comparison_ready=true` 表示批次完整且审计通过，实际任务成功率另外统计；超时和任务失败视频也全部保留。
+`--workers 4` 是两种模型共同使用的一个进程并发限额，全部作业共用调度池。上述命令将两组模型的 OOD 评测分别保存到 `outputs/test/act_insert_plug_v1_rgb/ood/<时间>/` 与 `outputs/test/diffusion_insert_plug_v1_rgb/ood/<时间>/`，联合汇总保存在 `outputs/test/act_diffusion_insert_plug_v1_rgb/ood/<时间>/`。指定 `--output` 时，模型结果默认放在指定目录的 `act/` 和 `diffusion/` 中，也可分别用 `--act-output`、`--diffusion-output` 指定目录。入口结束前会审计全部逐条报告、实际配置及来源/checkpoint 哈希，并完整解码双方全部视频，然后生成各模型的 `summary.json`、`episodes.csv`，以及对比目录中的 `summary.json`、`positions.csv` 和 `comparison_config.json`。以 `comparison_ready=true` 表示批次完整且审计通过，实际任务成功率另外统计；超时和任务失败视频也全部保留。
 
 本次对比已完成，使用共享 14 个 worker、CUDA/EGL；新 `pos0`–`pos9` 在两种模型下均为 **0/10 成功**：
 
@@ -515,11 +601,11 @@ python -m examples.insert_plug.policy.compare_generalization \
 
 双方各完成 60,000 个控制区间、6,000 秒仿真，200 条视频共 **120,200 帧**全部完整解码。`comparison_ready=true`，独立逐条配置/seed 审计通过；108 项训练/冻结证据引用 SHA 与另外 19 个受保护的模型及配置文件均未改变。新增布局和评估入口共 83 项相关测试通过。运行保留在原训练 tmux 会话的 `generalization_n32` 窗口，进程退出码 0；启动脚本和日志在 [检查目录](../../outputs/_checks/generalization_v1_n32_evaluation/)。
 
-结果在 [对比目录](../../outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/)：包含 [完整汇总](../../outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/summary.json)、[逐位置 CSV](../../outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/positions.csv)、[成功率图](../../outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/comparison.png)、[训练与新位置图](../../outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/positions.png)和 [终点诊断](../../outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/endpoint_diagnostics.json)。全部报告和原视频分别保存在 [ACT 批次](../../outputs/test/act_insert_plug_v1_rgb_ood_20261109_004335/) 与 [Diffusion 批次](../../outputs/test/diffusion_insert_plug_v1_rgb_ood_20261109_004334/)，按 `pos*/episode_*/` 组织。
+结果在 [对比目录](../../outputs/test/act_diffusion_insert_plug_v1_rgb/ood/20261109_004335/)：包含 [完整汇总](../../outputs/test/act_diffusion_insert_plug_v1_rgb/ood/20261109_004335/summary.json)、[逐位置 CSV](../../outputs/test/act_diffusion_insert_plug_v1_rgb/ood/20261109_004335/positions.csv)、[成功率图](../../outputs/test/act_diffusion_insert_plug_v1_rgb/ood/20261109_004335/comparison.png)、[训练与新位置图](../../outputs/test/act_diffusion_insert_plug_v1_rgb/ood/20261109_004335/positions.png)和 [终点诊断](../../outputs/test/act_diffusion_insert_plug_v1_rgb/ood/20261109_004335/endpoint_diagnostics.json)。全部报告和原视频分别保存在 [ACT 批次](../../outputs/test/act_insert_plug_v1_rgb/ood/20261109_004335/) 与 [Diffusion 批次](../../outputs/test/diffusion_insert_plug_v1_rgb/ood/20261109_004334/)，按 `pos*/episode_*/` 组织。
 
-终点位置统计中，ACT 70 条、Diffusion 83 条的插销尖端 XY 距源位置不超过 1 mm；其余分别为 30 条和 17 条。这个统计只描述终点，不能等同于全过程是否提起。抽查视频明确看到两类代表现象：[ACT pos0](../../outputs/test/act_insert_plug_v1_rgb_ood_20261109_004335/pos0/episode_000000/rollout.mp4) 未把插销从源孔带走；[ACT pos3](../../outputs/test/act_insert_plug_v1_rgb_ood_20261109_004335/pos3/episode_000000/rollout.mp4) 与 [Diffusion pos0](../../outputs/test/diffusion_insert_plug_v1_rgb_ood_20261109_004334/pos0/episode_000000/rollout.mp4) 提起后将其放在目标孔旁，前者倾倒、后者近直立留在桌面。截图与对应时间保存在检查目录的 `previews/`，不能据此断言注意力或内部策略机制。
+终点位置统计中，ACT 70 条、Diffusion 83 条的插销尖端 XY 距源位置不超过 1 mm；其余分别为 30 条和 17 条。这个统计只描述终点，不能等同于全过程是否提起。抽查视频明确看到两类代表现象：[ACT pos0](../../outputs/test/act_insert_plug_v1_rgb/ood/20261109_004335/pos0/episode_000000/rollout.mp4) 未把插销从源孔带走；[ACT pos3](../../outputs/test/act_insert_plug_v1_rgb/ood/20261109_004335/pos3/episode_000000/rollout.mp4) 与 [Diffusion pos0](../../outputs/test/diffusion_insert_plug_v1_rgb/ood/20261109_004334/pos0/episode_000000/rollout.mp4) 提起后将其放在目标孔旁，前者倾倒、后者近直立留在桌面。截图与对应时间保存在检查目录的 `previews/`，不能据此断言注意力或内部策略机制。
 
-实验盘点补核了已有的 [ACT 训练位置完整基线](../../outputs/test/act_insert_plug_v1_rgb_ind_20261108_172134/summary.json)：10/100 成功（仅 pos6 为 10/10），90 次超时、0 运行异常，55,930 帧视频完整审计通过；checkpoint 文件哈希、基础场景和 n32／关闭集成等设置与本批一致。因此同设置的训练位置→新位置结果为 **ACT 10/100→0/100、Diffusion 89/100→0/100**，四批正式评测合计 400 条。此前“ACT 缺少完整基线”的表述已更正。这次只评估位置变化，独立新场景数量为十个；不能外推到未见物体、外观、光照或动力学条件。
+实验盘点补核了已有的 [ACT 训练位置完整基线](../../outputs/test/act_insert_plug_v1_rgb/ind/20261108_172134/summary.json)：10/100 成功（仅 pos6 为 10/10），90 次超时、0 运行异常，55,930 帧视频完整审计通过；checkpoint 文件哈希、基础场景和 n32／关闭集成等设置与本批一致。因此同设置的训练位置→新位置结果为 **ACT 10/100→0/100、Diffusion 89/100→0/100**，四批正式评测合计 400 条。此前“ACT 缺少完整基线”的表述已更正。这次只评估位置变化，独立新场景数量为十个；不能外推到未见物体、外观、光照或动力学条件。
 
 ### Diffusion 在训练内位置上的空间权重可视化
 
@@ -527,7 +613,7 @@ python -m examples.insert_plug.policy.compare_generalization \
 
 ```bash
 python -m examples.insert_plug.policy.visualize_diffusion_attention \
-  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/artifacts/checkpoints/030000 \
+  --checkpoint outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/checkpoints/030000 \
   --position 0 --seed 0 --n-action-steps 32 --duration 60 \
   --device cuda --backend egl
 ```
@@ -545,7 +631,7 @@ python -m examples.insert_plug.policy.visualize_diffusion_attention \
 ```bash
 conda activate mujoco
 python -m examples.insert_plug.policy.visualize_attention \
-  --checkpoint outputs/train/act_insert_plug_v1_rgb_20261108_154950/artifacts/checkpoints/030000 \
+  --checkpoint outputs/train/act_insert_plug_v1_rgb_20261108_154950/checkpoints/030000 \
   --temporal-ensemble-coeff 0.01 --n-action-steps 1 \
   --position 0 --duration 20 --device cpu --backend osmesa
 ```
@@ -640,20 +726,11 @@ python -m examples.insert_plug.policy.camera_ablation \
 
 结果目录分别为 `outputs/insert_plug/rollouts/act_030000_pos0_n1_cpu/`、`act_030000_pos0_n100_cpu/`、`act_030000_pos0_n10_cuda/`。GPU 运行检查了完整 60,000 个物理步，双视角视频为 512×256、10 fps；60 秒仿真在未开启实时节流时约耗时 51 秒。最早 CPU 烟测的 XML 是根据报告保存的完整配置补建，并在报告中注明；后续运行在启动时直接保存实际 XML。三个设置均未完成任务，这是已测 pos0 的结果，不能推广成全部十个位置的成功率。
 
-完整无窗口批量测试按模型、版本、模态、ind/ood 和测试时间保存。`outputs/test/act_insert_plug_20261107_2044/` 保留旧严格接触模式的 50 步批次，每个 pos 测试 10 次，共 100 次；更早的 10 步执行批次及其额外诊断已按用户要求删除。保留批次的历史结果为 **3 次完整成功、97 次接触阈值中止、0 次超时**，成功均来自 pos2（3/10）。原 `summary.json`、`episodes.csv` 和视频不改写；97 次中止只能说明触发了当时阈值，不能证明允许继续执行后仍会失败，也不能代表当前默认模式的成功率。
+历史记录中，`outputs/test/act_insert_plug_20261107_2044/` 是旧严格接触模式的 50 步批次，每个 pos 测试 10 次，共 100 次；更早的 10 步执行批次及其额外诊断已按用户要求删除。保留批次的历史结果为 **3 次完整成功、97 次接触阈值中止、0 次超时**，成功均来自 pos2（3/10）。原 `summary.json`、`episodes.csv` 和视频不改写；97 次中止只能说明触发了当时阈值，不能证明允许继续执行后仍会失败，也不能代表当前默认模式的成功率。
 
-关闭接触中止后另测 pos3、seed 30 一次，完整执行 600 个动作、60 秒，无接触中止或运行异常，但超时未完成任务，见[单次新模式报告](../../outputs/test/act_insert_plug_20261107_2044_contact_response/pos3/summary.json)与[双视角视频](../../outputs/test/act_insert_plug_20261107_2044_contact_response/pos3/episode_000000/rollout.mp4)。视频 601 帧完整解码。这是单次检查，不是 100 条重新评估结果。
+关闭接触中止后另测 pos3、seed 30 一次，完整执行 600 个动作、60 秒，无接触中止或运行异常，但超时未完成任务，报告和双视角视频的原始路径为 `outputs/test/act_insert_plug_20261107_2044_contact_response/pos3/`。视频 601 帧完整解码。这是单次检查，不是 100 条重新评估结果。
 
-后续新模式批量测试使用新目录，例如下列命令；示例不表示已重新执行 100 次测试：
-
-```bash
-python -m examples.insert_plug.policy.evaluate --workers 5 --n-action-steps 50 \
-  --output outputs/test/act_insert_plug_20261107_2044_contact_response_batch
-python -m examples.insert_plug.policy.summarize \
-  --root outputs/test/act_insert_plug_20261107_2044_contact_response_batch \
-  --checkpoint outputs/train/act_insert_plug_20261107_2044/artifacts/checkpoints/030000 \
-  --n-action-steps 50 --write
-```
+现有模型的批量测试与汇总命令见[Diffusion 批量评测示例](#diffusion每次执行-32-步)。
 
 历史 pos0 逐步诊断发现，完整预测里超过 5 mm 的抬升在第 23–28 个动作才出现，前 10 步主要保持抓取，因此反复重新预测会推迟抬升。这是调整到 50 步的依据。当前每步仍为 100 ms；之后按用户要求关闭了默认附加接触中止，模型完成率需在新模式下另行评估。
 
@@ -702,8 +779,8 @@ python -m examples.insert_plug.policy.summarize \
 conda activate mujoco
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 python -m examples.insert_plug.policy.translation_probe \
-  --act-checkpoint outputs/train/act_insert_plug_v1_rgbd_20261110_005600/artifacts/checkpoints/030000/pretrained_model \
-  --diffusion-checkpoint outputs/train/diffusion_insert_plug_v1_rgbd_20261110_005600/artifacts/checkpoints/030000/pretrained_model \
+  --act-checkpoint outputs/train/act_insert_plug_v1_rgbd_20261110_005600/checkpoints/030000/pretrained_model \
+  --diffusion-checkpoint outputs/train/diffusion_insert_plug_v1_rgbd_20261110_005600/checkpoints/030000/pretrained_model \
   --device cuda --backend egl --seeds 0 1 2 3 4 \
   --output outputs/insert_plug/translation_probe/new_run
 # 绘图可用现成的系统 Python，推理与物理仍使用共享 mujoco 环境。

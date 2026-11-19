@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import yaml
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import DATA_DIR, WORKSPACE_ROOT
 
 
 def emit(**values):
@@ -107,7 +107,7 @@ def collect_position(position, base, output, episodes, sample_hz, backend, grid_
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--positions-config', default=str(WORKSPACE_ROOT / 'config/insert_plug_positions.yaml'))
-    parser.add_argument('--output', default=str(WORKSPACE_ROOT / 'outputs/datasets/insert_plug'))
+    parser.add_argument('--output', default=str(DATA_DIR / 'insert_plug'))
     parser.add_argument('--episodes-per-position', type=int, default=10)
     parser.add_argument('--sample-hz', type=float, help='Recording rate; defaults to the position manifest')
     parser.add_argument('--control-hz', type=float, help='Expert target-update rate; defaults to manifest/base config')

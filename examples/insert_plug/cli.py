@@ -224,10 +224,14 @@ def plan_scene(args):
 def rollout_policy(args):
     """Keep inference dependencies optional for all existing scene commands."""
     import yaml
+    from mujoco_tools.paths import relocated_evaluation_path
 
-    policy_config = Path(args.policy_config).expanduser()
-    if not policy_config.is_absolute():
-        policy_config = ROOT / policy_config
+    def workspace_path(value):
+        if value is None:
+            return None
+        return relocated_evaluation_path(ROOT / Path(value).expanduser())
+
+    policy_config = workspace_path(args.policy_config)
     settings = yaml.safe_load(policy_config.read_text(encoding='utf-8')) or {}
     allowed = {'checkpoint', 'scene_config', 'positions_config', 'device',
                'n_action_steps', 'duration', 'position', 'stop_on_contact', 'contact_diagnostics'}
@@ -237,12 +241,6 @@ def rollout_policy(args):
     def choose(name, default=None):
         value = getattr(args, name, None)
         return settings.get(name, default) if value is None else value
-
-    def workspace_path(value):
-        if value is None:
-            return None
-        path = Path(value).expanduser()
-        return path if path.is_absolute() else ROOT / path
 
     checkpoint = choose('checkpoint')
     if not checkpoint:
@@ -256,7 +254,8 @@ def rollout_policy(args):
         checkpoint=workspace_path(checkpoint),
         config=workspace_path(args.config or settings.get('scene_config')),
         positions_config=workspace_path(choose('positions_config')),
-        output=args.output, position=position, episodes=args.episodes, seed=args.seed,
+        output=relocated_evaluation_path(args.output) if args.output else None,
+        position=position, episodes=args.episodes, seed=args.seed,
         duration=choose('duration', 60.), device=choose('device', 'auto'),
         n_action_steps=choose('n_action_steps', 1), viewer=args.viewer,
         realtime=args.realtime, video=args.video,
@@ -313,7 +312,7 @@ def main(argv=None):
     for name in ('demo', 'collect'):
         p = sub.add_parser(name, help='Execute the physical expert and optionally record dual-camera data')
         p.add_argument('--config', default=None)
-        p.add_argument('--output', help='Episode directory (default: outputs/datasets/insert_plug/run_<time>)')
+        p.add_argument('--output', help='Episode directory (default for recordings: datasets/insert_plug/run_<time>)')
         p.add_argument('--episodes', type=int, default=1 if name == 'demo' else 5)
         p.add_argument('--seed', type=int, default=0)
         p.add_argument('--randomize-mm', type=float, default=0.)

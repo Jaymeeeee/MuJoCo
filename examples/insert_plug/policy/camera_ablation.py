@@ -132,7 +132,7 @@ def run_ablation(*, source_run, output=None, device='cpu', seed=20261108, patch_
     import torch
     from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
     from mujoco_tools.lerobot_policy import LeRobotPolicy
-    from mujoco_tools.paths import OUTPUTS_DIR
+    from mujoco_tools.paths import OUTPUTS_DIR, relocated_checkpoint_path
     from mujoco_tools.policy_ablation import mask_camera, predict_action_chunks, random_patch_mask
 
     conditions = build_conditions(patch_repeats)
@@ -148,7 +148,7 @@ def run_ablation(*, source_run, output=None, device='cpu', seed=20261108, patch_
         if type(max_frames) is not int or not 1 <= max_frames <= len(frames):
             raise ValueError('max_frames must be within the saved trajectory')
         frames, chunks = frames[:max_frames], chunks[:max_frames]
-    checkpoint = Path(source['policy']['checkpoint'])
+    checkpoint = relocated_checkpoint_path(source['policy']['checkpoint'])
     config_sha = hashlib.sha256((checkpoint / 'config.json').read_bytes()).hexdigest()
     if config_sha != source['policy']['config_sha256']:
         raise ValueError('Checkpoint configuration differs from the recorded policy')

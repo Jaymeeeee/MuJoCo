@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image,ImageDraw
+from mujoco_tools.paths import relocated_checkpoint_path
 from .visualize_attention import _font,_overlay,_colors
 
 
@@ -89,7 +90,7 @@ def main(argv=None):
     if args.device!=metadata['device']:raise ValueError('Use original source device for exact action comparison')
     frames=report['attention']['frames'];chunks=report['attention']['chunks'];n=len(frames)
     if n!=len(chunks) or n!=roll['completed_control_steps']:raise ValueError('Source frames/chunks/actions mismatch')
-    checkpoint=Path(metadata['checkpoint'])
+    checkpoint = relocated_checkpoint_path(metadata['checkpoint'])
     protected_paths=[source/'report.json',source/'validation.json',source/'rng_states.npz',source/'prediction_actions.npz',source/'rollout.mp4',source/'scene.xml']
     protected_paths += [source/c['weights'] for c in chunks]
     protected_paths += [p for p in checkpoint.iterdir() if p.is_file()]

@@ -1,329 +1,55 @@
-# MuJoCo 仿真工作区
+# MuJoCo 插销仿真
 
-仿真、数据转换、模型训练和 ACT 策略部署统一使用 Conda 环境 `mujoco`。首次配置或更新环境，在仓库根目录运行 `bash scripts/setup_mujoco_env.sh`。通用资源放在顶层，每个场景的实现放在 `examples/`。
-
-```text
-MuJoCo/
-├── assets/                  # 共享机器人、网格与材质
-├── config/                  # 场景参数和清理策略
-│   ├── insert_plug.yaml
-│   ├── insert_plug_positions.yaml # 10 组已检查的 2 cm 网格位置
-│   └── cleanup.yaml
-├── examples/
-│   └── insert_plug/         # 统一 CLI、scene.xml 及按功能拆分的任务实现
-│       ├── environment/     # 场景、物件、仿真接口、布局与截图
-│       ├── control/         # 专家、轨迹规划与执行检查
-│       ├── data/            # 记录、批量采集、转换与视频回放
-│       ├── policy/          # 模型部署、批量评估、注意力及相机遮挡诊断
-│       └── diagnostics/     # 专家验证、数据审计与动作回放检查
-├── src/mujoco_tools/        # 通用资产工具、路径、环境诊断、产物清理
-├── scripts/                 # 仅保留环境安装与共享资产准备入口
-│   ├── setup_mujoco_env.sh
-│   └── setup_assets.py
-├── tests/                   # 自动化测试
-├── outputs/
-│   ├── datasets/insert_plug/ # 历史数据路径及默认新批次目录
-│   ├── datasets/insert_plug_v1/ # 本次 100 条原始记录及 lerobot/ 转换结果
-│   ├── train/               # 模型、任务、版本、模态、训练时间
-│   ├── test/                # 模型、任务、版本、模态、ind/ood、测试时间
-│   ├── insert_plug/       # 按需生成的图片、视频和计划导出
-│   └── _checks/            # 临时测试产物，自动清理
-├── environment.yml
-└── pyproject.toml
-```
-
-训练目录统一为 `<model>_insert_plug_<version>_<rgb|rgbd>_<YYYYmmdd_HHMMSS>`，测试目录为 `<model>_insert_plug_<version>_<rgb|rgbd>_<ind|ood>_<YYYYmmdd_HHMMSS>`。例如 `act_insert_plug_v1_rgb_20261108_154950` 和 `act_insert_plug_v1_rgb_ind_20261108_172134`。训练用训练启动时间，测试用该次 `started_at`，均按 `Asia/Shanghai` 命名；两模型汇总以 `act_diffusion` 开头。batch size、workers、checkpoint 步数、执行长度和渲染后端记录在目录内配置中，不再写进目录名。
-
-2026-11-12 已迁移现有 4 个训练、8 个测试及 2 个汇总目录，并更新可用路径引用。[迁移清单](outputs/_checks/output_naming_20261112/manifest.json)记录旧新路径及文本修改前后校验值。日志、checkpoint 内原始训练配置和已交付导出包保留原字节；历史审计描述当时的实验，不能视为本次路径迁移后的新审计。当前运行路径见各训练目录顶层 `train_config.json`，原始文本存于迁移目录的 `original_texts.tar.gz`。
-
-`outputs/insert_plug/` 保留 `attention/`、`camera_ablation/`、`translation_probe/` 和 `reports/` 分类，下面的实验目录统一为 `<model>_insert_plug_<version>_<rgb|rgbd>_[ind|ood]_[实验类型]_<时间>`。保留 `chunked`、`ensemble`、`encoder_features`、`stateless_reanalysis`、`initial_open_loop`、`verified_grasp` 等用于区分实验的标签；checkpoint 步数、seed、执行长度和具体系数留在配置中。混合平移条件不标成单一 ind/ood。13 个现有实验已迁移，见[实验目录映射](outputs/_checks/insert_plug_naming_20261112/manifest.json)。9 个旧实验只保留日期精度，其中 4 个日期来自原始媒体/数组的文件日期，清单明确标注它们不是实验启动时间；新注意力与相机消融运行记录同一次上海时间 `started_at`，默认目录精确到秒。历史导出文件名及内容保持不变。
+Franka FR3 使用 Robotiq 2F-85 夹爪，将螺栓从起始孔取出并插入目标孔。以下命令在 MuJoCo 仓库根目录运行。
 
 ## 运行场景
 
-```bash
-conda activate mujoco
-cd ~/Projects/MuJoCo
-python -m examples.insert_plug view
-```
-
-`view` 只预览静态场景，可以旋转、缩放视角；不会运行专家、推进物理或采集数据。关闭窗口后临时场景文件自动删除。`--camera third_person` 或 `--camera wrist` 可切换初始相机视角。
-
-当前场景使用 FR3、Robotiq 2F-85 和用户提供的螺栓/放置桶 STL。保存当前初始场景图片可运行 `python -m examples.insert_plug snapshot --backend egl`，图片位于 `outputs/insert_plug/scene_preview/`。
-
-当前配置生成的完整场景保存在 `examples/insert_plug/scene.xml`。修改配置后运行 `python -m examples.insert_plug build` 重新生成。采集目录中的 `episode_<seed>.xml` 则是该条轨迹实际使用的场景快照，可能包含随机化后的孔位，需随 HDF5 一起保留。
-
-第三视角对外字段为 `observation.images.head`，腕部为 `observation.images.wrist`。当前默认同时采集 `observation.depth.head`、`observation.depth.wrist`，保存为与 RGB 对齐的 float32 米制深度；开关在 `config/insert_plug.yaml` 的 `cameras.depth.enabled`。`snapshot` 还会生成原始深度 NPY、米制深度预览和相机标定 JSON。`view --camera head` 可查看固定第三视角。旧记录仍可读取和回放；深度输入 ACT 的训练适配需另行接入。
-
-先导出完整名义计划而不执行动作、推进物理或采集图像：
+首次使用时，初始化子模块并安装环境。
 
 ```bash
-python -m examples.insert_plug plan --output outputs/insert_plug/plans
-```
-
-它保存 `nominal_trajectory.json` 与 `nominal_trajectory.npz`。两个放置桶固定在世界坐标系中，没有关节，不会被接触推走；平面位置只在 `config/insert_plug.yaml` 的 `board.source_xy` 和 `board.target_xy` 中配置。规划采用任务约束下的平滑笛卡尔轨迹与 IK：默认提起使用余弦速度加减速与匀速段，抓取点、放置点上方采用具有连续向下速度的五次 Hermite 连接，并检查可达性及运动界限。默认不做附加碰撞阈值预检；MuJoCo 仍通过原碰撞体计算实际接触、摩擦和阻挡。
-
-执行、采集并生成双相机视频：
-
-```bash
-python -m examples.insert_plug demo --backend egl --width 512 --output outputs/datasets/insert_plug/under20_demo --video
-```
-
-`demo` 和 `collect` 自动先求解完整名义计划，再执行动作。默认 `continuous_hover=true`：通过抓取点上方时以约 20 mm/s 继续下降，通过目标上方及预插入位置时以约 8 mm/s 连续下移，不在这些路点停稳或重新从零速起步。目标上方仍会测量实际夹持变换，但后续命令衔接上一条目标及其速度，避免退回滞后的实际位置。插入前即时检查孔轴匹配；默认连续模式不执行停住后再纠偏的循环，条件不满足会报告失败。
-
-搬运 TCP 高度从桌面上方 16 cm 降为 10 cm；抓取前接近高度为抓取点上方 4 cm，释放后撤离 5 cm。提起使用 `cosine_velocity`，时长 4 秒，两端加减速各占 30%，适配缩短后的约 56 mm 行程。下降抓取、搬运、对准、浅插的配置时长分别为 1.0、1.5、1.2、2.5 秒，规划器可为满足运动界限延长时长。空载接近允许 0.24 m/s，持物段笛卡尔速度上限为 0.18 m/s；关节速度、加速度上限为 1.4 rad/s、4 rad/s²。浅插深度仍为 12 mm，松爪时长仍为 1 秒。控制和记录均为 10 Hz，每个动作保持 100 ms。
-
-实际抓取与浅插终点仍需精确到位，双指接触稳定至少 200 ms、漂移合格后再提起；最终落座仍检查至少 250 ms 的稳定性。默认 `task.planning.strict_collision_checks=false`，不创建 `MotionGuard`，普通抓取、孔壁和孔口接触不会触发附加阈值中止。执行结果与检查信息存入 HDF5 元数据 `execution_result`；需要导出名义计划时单独运行 `plan`。
-
-上述命令的数据集保存在 `outputs/datasets/insert_plug/under20_demo/`，请求的双相机视频另存到 `outputs/insert_plug/previews/under20_demo/preview.mp4`。两侧标注 Head (third-person) 和 Wrist，独立页眉显示仿真时间与当前阶段，按记录帧率播放并保留完整原始画面。已有 episode 和视频不会覆盖，重复执行请改用新输出目录。
-
-当前默认按“完整任务少于 20 秒”调整，在原十个固定布局各验证一次，**10/10 完成**，共 1,899 个控制步，时长 **18.6–19.7 秒、平均 18.99 秒**。十个布局均无额外对准纠偏，抓取点上方、目标上方及预插入边界没有重复保持指令。持物 TCP 峰值约 10.4 cm，搬运时插销尖端与孔口间距约 2.6 cm 以上。见[当前验证报告](outputs/_checks/insert_plug_under20/summary.json)和[双视角视频](outputs/insert_plug/previews/under20.mp4)。这是已测十个布局的结果，改变布局后仍需验证。
-
-场景 YAML 的默认固定位置另已完成一条 **18.9 秒、189 帧、10 Hz** 的双路 RGB-D 实录，第三视角 MP4 审计通过。按保存动作独立回放后任务成功，关节与插销状态相对原记录偏差均为零；双视角视频完整解码 189 帧，82 项回归测试通过。一次性原始试录文件清理，保留[录制审计](outputs/_checks/insert_plug_under20/recording_validation.json)、[动作回放报告](outputs/_checks/insert_plug_under20/recorded_action_replay.json)和预览视频。
-
-上一版连续路点专家平均 24.42 秒，其[报告](outputs/_checks/insert_plug_continuous_hover/summary.json)与[视频](outputs/insert_plug/previews/continuous_hover.mp4)保留为历史对照。更早的平滑专家平均 30.3 秒，保留训练批次平均 38.41 秒。本次已另行采集 `insert_plug_v1` 的 100 条新记录；此前数据、模型和策略测试结果未被覆盖；后续 ACT 与 Diffusion 的训练状态见下文。抓稳、对准、插入和最终稳定要求保留，未启用接触诊断时不声明“零违规接触”。
-
-需要实时窗口时运行：
-
-```bash
-python -m examples.insert_plug demo --backend glfw --viewer --realtime
-```
-
-需要图形桌面才能弹出窗口。无窗口采集使用 EGL：
-
-```bash
-python -m examples.insert_plug collect --backend egl --episodes 10 --randomize-mm 0 \
-  --output outputs/datasets/insert_plug/under20_fixed_v1
-```
-
-`demo` 和 `collect` 默认都保存到 `outputs/datasets/insert_plug/run_<时间>/`。每条轨迹有独立的 `episode_<seed>/` 子目录，内部保留同名 `.h5`、`.yaml`、`.xml`、`.mp4` 四个文件，例如 `run_<时间>/episode_000000/episode_000000.h5`。每条 MP4 默认生成，内容是原分辨率、不叠字的第三视角 `head` RGB，默认 10 fps；HDF5 仍包含两路 RGB 和深度。`--video` 额外请求的双视角视频另存到 `outputs/insert_plug/previews/<运行目录名>/preview.mp4`。`--no-images` 物理检查放到 `outputs/_checks/insert_plug/`，不生成 HDF5 或视频。显式 `--output` 相对于运行命令的当前目录。
-
-历史固定位置测试批的原始保存路径为 `outputs/datasets/insert_plug/test/`，10 条均已成功完成并通过校验，每条 384 帧、15 Hz。这些历史记录不会随当前 10 Hz 配置更新，重复采集应使用新的批次目录或不同 seed。HDF5 中的 `model_path` 与 `execution_result.model` 使用同目录 XML 的相对文件名，便于一起移动整条记录。
-
-记录频率由 `config/insert_plug.yaml` 的 `recording.sample_hz` 或 `--sample-hz` 设置，默认 10 Hz；专家控制默认也为 10 Hz，物理仿真为 1 kHz。每条 `action` 在采样时下发，并在接下来的 100 个 1 ms 物理步中保持恒定，直到下一条观测。专家先将目标量化为 float32，再将这些精确数值交给仿真并保存到 HDF5；导出 LeRobot 的 float32 动作不会再次改变控制数值。时间戳来自真实物理时刻，默认为 `0.0、0.1、0.2…` 秒。若显式设置不同的采样和控制频率，应按记录元数据解释动作保持时间。`collect` 默认不随机化底座位置，需要随机布局时显式使用 `--randomize-mm`。
-
-根目录 `data/peg_transfer/` 的旧记录已清理，旧 `outputs/peg_transfer/` 历史记录仍保留；旧资产目录名通过符号链接兼容历史场景。新记录使用 `insert-plug-v3`，仍支持读取与回放 `peg-transfer-v1/v2`。
-
-已保存的记录和视频不会随模型修改而更新；完整规划范围、执行条件和数据格式见[insert_plug 场景](examples/insert_plug/README.md)。控制台命令 `insert-plug` 也可作为入口。
-
-## 2 cm 网格位置批量采集
-
-当前新批次位于 **`outputs/datasets/insert_plug_v1/`**，十组位置各 10 条，**100/100 成功，共 18,990 帧、400 个原始文件，约 6.55 GB**。控制和记录均为 **10 Hz**，物理为 1 kHz；每条包含 256×256 双路 RGB-D 和第三视角 MP4。完整任务时长 **18.6–19.7 秒，平均 18.99 秒**，全部严格小于 20 秒。见[整批审计](outputs/_checks/insert_plug_under20_collection/raw_audit.json)；[保存动作物理回放](outputs/_checks/insert_plug_under20_collection/action_replay.json)也 **100/100 成功**，关节与插销状态最大偏差均为零，最终 250 ms 的 251 个物理采样点全部稳定。接触诊断关闭，结果为 `null`，不声明零违规接触。
-
-`config/insert_plug_positions.yaml` 保存 10 组固定位置。两个底座相对于基础配置的位置按 2 cm 整数格移动，当前范围为每轴 ±4 cm；每组的两个底座位置均与其他组不同。布局已检查实际 STL 视觉网格是否完整落在第三视角视锥内，并通过完整任务的物理预执行。
-
-另有先前专家的历史训练批次，在相同 10 个固定布局各采集 10 条，曾替换旧的 50 Hz 控制／10 Hz 记录批次。其控制和记录均为 **10 Hz**、物理为 **1 kHz**，包含双路 RGB、float32 米制深度及第三视角 MP4；**100/100 条成功，共 38,410 帧、400 个文件，约 13.64 GB**。采集当时的独立审计和 100 次保存动作物理重放全部通过、零违规接触，关节和插销状态最大偏差均为零；初始和最终视觉网格的画面边缘最小余量为 51.694 px。这些是先前数据的结果，不是当前平滑专家新采的 100 条。
-
-`config/insert_plug_positions.yaml` 已按当前专家配置重新验证，底座坐标保持不变。本批次的采集与审计命令如下；原始采集重跑会验证并跳过同配置的完整记录，再采新批次请更换输出目录：
-
-```bash
-python -m examples.insert_plug.data.collect_positions --workers 3 \
-  --output outputs/datasets/insert_plug_v1
-
-# 只采集或继续检查一个位置
-python -m examples.insert_plug.data.collect_positions --position pos0 --workers 1 \
-  --output outputs/datasets/insert_plug_v1
-
-# 采集完成后审计全部 100 条记录
-python -m examples.insert_plug.diagnostics.audit_batch --positions-config config/insert_plug_positions.yaml \
-  --root outputs/datasets/insert_plug_v1 --sample-hz 10 --control-hz 10 --max-duration-s 20
-```
-
-历史数据的原始保存路径为 `outputs/datasets/insert_plug/pos0/` 至 `pos9/`，不随代码克隆迁移；本批次写入 `outputs/datasets/insert_plug_v1/pos0/` 至 `pos9/`。全局编号从 0 到 99，例如 `pos0/episode_000000/`、`pos1/episode_000010/`、`pos9/episode_000099/`，每条仍保留同名 HDF5、YAML、XML、MP4 四个文件。原 `test/` 中的 15 Hz 固定位置记录保留。
-
-批量脚本会校验并跳过已完成且配置相同的记录；不完整或配置不同的记录会保留并报错。基础配置的 SHA256 与位置清单不一致时会拒绝启动，需要重新生成位置清单并选择新的输出目录。新清单可用 `python -m examples.insert_plug.environment.layouts --output config/insert_plug_positions_new.yaml` 生成，已有清单不会被覆盖。详细参数和目录示例见[场景说明](examples/insert_plug/README.md#网格位置批量采集)。
-
-## LeRobot 数据集
-
-新批次已转换到 **`outputs/datasets/insert_plug_v1/lerobot/`**：**100 条、18,990 帧、10 Hz，108 个文件，约 5.71 GB**，使用本地 LeRobot 0.7.1 写入 v3 格式。全部帧的深度像素逐位一致，动作、状态、原始时间戳和阶段均通过对照检查；官方读取器及最终目录读取验证通过。RGB 为有损 H.264。见[转换验证](outputs/datasets/insert_plug_v1/lerobot/meta/export_validation.json)和[本批次总报告](outputs/_checks/insert_plug_under20_collection/summary.json)。原始 400 个文件保留，没有进行模型训练。
-
-先前专家历史转换的原始保存路径为 **`outputs/datasets/insert_plug/lerobot/`**，包含 100 条、38,410 帧、10 Hz，约 11.65 GB，保持原样。它此前替换的是 50 Hz 控制的旧批次，不会因这次专家优化再次删除或更新。该历史转换使用官方 LeRobot 0.7.0 的 `LeRobotDataset` API 写入 v3 格式，仅在本地保存；当时使用独立的 Python 3.12、CPU PyTorch `lerobot` 环境。后续转换统一在 `mujoco` 环境中使用仓库的 `third_party/lerobot`。历史批次的全部动作、状态、时间戳、阶段及深度像素已逐帧校验，动作 float32 转换无损，最终目录读取验证通过。
-
-```bash
-conda activate mujoco
-# 本批次已完成转换；以下为复现命令，重做时须将 --output 改为尚不存在的新目录
-python -m examples.insert_plug.data.export_lerobot \
-  --source-root outputs/datasets/insert_plug_v1 \
-  --output outputs/datasets/insert_plug_v1/lerobot
-```
-
-`observation.images.head/wrist` 保存为两路 RGB H.264 视频；`observation.depth.head/wrist` 保存为 Parquet 内嵌的 float32 TIFF，单位米，转换时与原 HDF5 逐像素校验。`observation.state` 和 `action` 各 8 维（7 个关节角 rad ＋夹爪开口 m）。`meta/export_manifest.json` 保存原 HDF5 路径、位置编号、帧范围、相机标定与动作语义；验证结果见 `meta/export_validation.json`。
-
-ACT 输入配置片段位于 `config/act_insert_plug_features.json`，显式选择两路 RGB 和机器人状态。标准 ACT 不会自动利用这些米制深度；使用深度需要另加编码融合。当前数据的策略动作和专家目标均为 10 Hz；部署时每个动作执行一次 `Simulation.step(action)`，在 1 kHz 物理循环中保持 100 ms。读取示例、环境重建和输入配置见[场景 LeRobot 说明](examples/insert_plug/README.md#lerobot-转换与-act-输入)。
-
-## 训练 ACT
-
-```bash
-conda activate mujoco
-cd ~/Projects/MuJoCo
-lerobot-train --help
-```
-
-`insert_plug_v1` 的 ACT 训练已完成 30,000 步，运行目录为 `outputs/train/act_insert_plug_v1_rgb_20261108_154950/`，最终模型保存在 `artifacts/checkpoints/030000/pretrained_model/`。以下是另起训练的通用示例；将 `--dataset.root` 换成实际数据目录，并选择尚不存在的 `--output_dir`。
-
-```bash
-lerobot-train \
-  --dataset.repo_id=local/insert_plug \
-  --dataset.root=/path/to/local/lerobot_dataset \
-  --policy.type=act --policy.device=cuda --policy.push_to_hub=false \
-  --policy.input_features="$(python -c 'import json; print(json.dumps(json.load(open("config/act_insert_plug_features.json"))["input_features"]))')" \
-  --policy.output_features="$(python -c 'import json; print(json.dumps(json.load(open("config/act_insert_plug_features.json"))["output_features"]))')" \
-  --policy.chunk_size=100 --policy.n_action_steps=50 \
-  --batch_size=8 --steps=30000 --env_eval_freq=0 \
-  --output_dir="outputs/train/act_insert_plug_v1_rgb_$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S)"
-```
-
-特征配置显式限定两路 RGB、8 维机器人状态和 8 维动作，避免把数据集中的深度图自动加入标准 ACT。`--env_eval_freq=0` 关闭训练器的通用环境评估；训练完成后，用下述场景 `rollout` 入口评估模型。训练数据的图像尺寸应与 `config/act_insert_plug_features.json` 一致，默认是 256×256。
-
-## 训练 Diffusion
-
-Diffusion 已在 ACT 的 tmux 会话 `act_insert_plug_v1_20261108_154517` 的 `diffusion` 窗口完成 **batch size 64、30,000 步**训练，最终 `030000/pretrained_model/` 权重已保存，日志记录 `End of training`，退出码为 0。使用同一 `outputs/datasets/insert_plug_v1/lerobot/` 数据集、双路 256×256 RGB 和 8 维状态，保持 12 个数据加载进程、prefetch 2、bf16、seed 1000，每 5,000 步保存、每 50 步记录日志，关闭在线环境评估和上传。
-
-训练时间窗口与该 ACT 运行一致：`n_obs_steps=1`、`horizon=64`、`n_action_steps=64`、`drop_n_last_frames=0`。Diffusion 使用自身训练预设：状态/动作 MIN_MAX 归一化、Adam 学习率 `1e-4`，cosine 调度与 500 步 warmup。checkpoint 使用 DDPM，推理默认保留 100 个去噪步。训练完成不代表策略已通过仿真评估。
-
-```bash
-# 从普通终端进入训练会话
-tmux attach -t act_insert_plug_v1_20261108_154517
-# 已在 tmux 内时切换到 Diffusion 窗口
-tmux select-window -t act_insert_plug_v1_20261108_154517:diffusion
-```
-
-本次运行目录为 `outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/`：[启动脚本](outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/launch.sh)、[完整配置](outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/train_config.json)和[训练日志](outputs/train/diffusion_insert_plug_v1_rgb_20261108_220529/train.log)保存在其中，checkpoint 写入其 `artifacts/checkpoints/`。
-
-最终 `030000` 已完成十位置各十次测试，执行长度改为 **32**（10 Hz 下每 3.2 秒重新预测）：**89/100 成功，11 次 60 秒超时，0 运行异常**。pos0–pos9 分别成功 8、4、10、10、9、10、10、10、8、10 次。保留 horizon 64、DDPM 100 步及原归一化设置，全部报告和 100 条视频审计通过。见[结果汇总](outputs/test/diffusion_insert_plug_v1_rgb_ind_20261109_001724/summary.json)与[Diffusion 部署和测试说明](examples/insert_plug/README.md#diffusion每次执行-32-步)。
-
-另选的[十组未见位置对](config/insert_plug_generalization_v1.yaml)已完成 ACT / Diffusion 对比：两者均使用最终 `030000`、执行 32 步、ACT 关闭时序集成，每位置十次、最长 60 秒。**ACT 0/100，Diffusion 0/100**，各场景均 0/10，全部超时、无运行异常；200 条视频完整解码并通过配置及来源审计。新源位置和目标位置各自均未见，均在训练逐轴坐标范围内，并已通过 10/10 专家物理可行性验证；本组不能统称为四维位置对的严格插值。见[对比汇总](outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/summary.json)、[位置图](outputs/test/act_diffusion_insert_plug_v1_rgb_ood_20261109_004335/positions.png)及[实验说明](examples/insert_plug/README.md#未见位置对的-act--diffusion-对比)。
-
-## 训练后部署 ACT
-
-通用策略适配器在 `src/mujoco_tools/lerobot_policy.py`，支持 LeRobot ACT 和 Diffusion，按 checkpoint 的 `type` 自动选择模型；场景执行入口在 `examples/insert_plug/policy/rollout.py`。默认 checkpoint 和执行参数在 `config/insert_plug_policy.yaml`。模型配置、权重、输入归一化和动作反归一化均从完整的 `pretrained_model/` 加载，支持传入其上一级训练步目录。不会改写模型或训练数据。Diffusion 的观察历史由原模型维护，执行长度只改变缓存多少个动作，不改变训练的 horizon 或去噪步数。
-
-```bash
-conda activate mujoco
-cd ~/Projects/MuJoCo
-
-# 桌面终端：模型闭环控制，显示实时窗口并保存双视角视频
-python -m examples.insert_plug rollout --viewer --realtime
-
-# 无窗口：评估训练布局 pos0，默认保存视频
-python -m examples.insert_plug rollout --backend egl --position 0
-
-# 十个布局分别评估一次
-python -m examples.insert_plug rollout --backend egl --position all
-
-# 替换为其他 ACT checkpoint，每次预测后连续执行 50 个动作
-python -m examples.insert_plug rollout --backend egl \
-  --checkpoint /path/to/checkpoints/030000 --n-action-steps 50
-```
-
-策略动作固定为 10 Hz：每个 8 维绝对目标（7 个关节角 rad、完整夹爪开度 m）保持 100 ms，物理子步为 1 ms。本任务默认 `n_action_steps=50`，依次执行 50 个动作、5 秒后重新预测；当前 checkpoint 的 `chunk_size=100` 保持不变。可用 `--n-action-steps 1` 每步重新预测，100 步则对应 10 秒。`--realtime` 只调整墙钟播放速度，不改变控制和物理时间；计算较慢时仿真会慢于实时。
-
-默认使用位置清单中的 pos0；`--position config` 使用场景 YAML 的底座位置。`--episodes` 是每个选中位置的重复次数，默认 1；`--duration` 是每条最大仿真秒数，默认 60。`--device cpu/cuda/auto` 控制推理设备，`--no-video` 禁用视频。部署只输入两路 RGB 和状态，不把深度、目标位置或专家阶段传给该 ACT。
-
-结果保存在 `outputs/insert_plug/rollouts/run_<时间>/`，包含执行报告、场景快照和双视角视频；显式 `--output` 必须指向尚不存在的目录。默认不扫描附加接触阈值、不因普通接触停止；成功按真实插入、松爪、撤离及连续至少 0.25 秒稳定判断。非法动作、非有限值和数值异常仍会停止并保存原因。`--contact-diagnostics` 可显式记录旧接触诊断但不否决任务成功；`--stop-on-contact` 才启用旧严格接触中止模式，旧 `--continue-on-contact` 保留兼容。诊断关闭时 `contact_clean=null`、接触检查次数为 0，表示未检测，不代表没有接触。全部任务成功返回 0，否则返回 2；策略成功率需要独立评估。
-
-更多接口、环境重建及结果字段见[场景部署说明](examples/insert_plug/README.md#act-策略部署)。
-
-此前 `030000` checkpoint 的 pos0 单条验证中，1 步执行长度在初始位置附近超时；100 步在 9.707 秒因插销碰到源孔壁而停止；10 步在 CUDA 上能接近并夹住零件，但未继续拔出，60 秒超时且无违规接触。这些历史单条结果不代表当前 50 步设置的表现。独立的 10 步单条[双视角视频](outputs/insert_plug/rollouts/act_030000_pos0_n10_cuda/episode_000000/rollout.mp4)与[报告](outputs/insert_plug/rollouts/act_030000_pos0_n10_cuda/episode_000000/result.json)仍保留。
-
-## 模型批量测试
-
-训练模型的完整无窗口测试使用 `outputs/test/`，按上述模型、版本、模态、ind/ood 和测试时间命名，内部按位置分组。省略 `--output` 时自动生成规范名称；未知布局需用 `--split ind` 或 `--split ood` 明确标注，也可显式指定输出目录。以下旧模型命令仅作为历史用法：
-
-```bash
-conda activate mujoco
-python -m examples.insert_plug.policy.evaluate --workers 5 --n-action-steps 50 \
-  --output outputs/test/act_insert_plug_20261107_2044_contact_response_batch
-```
-
-该入口使用 `config/insert_plug_policy.yaml` 的模型和动作执行长度，在 pos0–pos9 各实际运行 10 次；每次重新初始化场景、清空策略队列，按位置分配不同随机种子但不随机改变布局。每个 `posN/episode_000000` 至 `episode_000009` 保留 `result.json`、`scene.xml`、双视角 `rollout.mp4`。`eval_config.json` 保存本批参数、冻结的配置和模型文件校验值，`launch_summary.json` 保存进程完成情况。已有输出目录拒绝覆盖。固定初始条件的重复结果用于检查重复性，不能等同于 100 种随机场景的泛化测试。
-
-完成后独立核验全部报告和视频，生成根目录的 `summary.json`、`episodes.csv`：
-
-```bash
-python -m examples.insert_plug.policy.summarize \
-  --root outputs/test/act_insert_plug_20261107_2044_contact_response_batch \
-  --checkpoint outputs/train/act_insert_plug_20261107_2044/artifacts/checkpoints/030000 \
-  --n-action-steps 50 \
-  --write
-```
-
-启动器完成全部物理测试与模型全部成功是两个不同指标；模型超时、运行异常或显式严格模式下的接触停止也会保留结果。默认汇总统计物理成功与停止原因；接触诊断关闭时接触相关字段为未检测，不把它当作失败或“零碰撞”。上述新目录示例不会覆盖旧批次，也不表示已执行新一轮 100 次测试。
-
-旧的 10 步执行批次（0 次完整成功、72 次接触停止、28 次超时）及其诊断文件已按用户要求删除。`outputs/test/act_insert_plug_20261107_2044/` 保留随后运行的 **50 步、旧严格接触模式批次**：pos0–pos9 各 10 次、10 Hz、每条最多 60 秒，全部 100 次已结束。历史结果为 **3 次完整成功、97 次接触阈值中止、0 次超时**；成功均来自 pos2（3/10）。这些中止只表明触发旧阈值，不能证明允许继续执行后仍会失败，也不能用 3% 代表当前默认接触模式的成功率。原 `summary.json` 和 `episodes.csv` 不作改写。[历史成功示例视频](outputs/test/act_insert_plug_20261107_2044/pos2/episode_000001/rollout.mp4)仍可查看。
-
-关闭接触中止后，另对 pos3、seed 30 做了单次检查：完整执行 600 个动作、60 秒，没有接触中止或运行异常，但超时未完成任务。[单次报告](outputs/test/act_insert_plug_20261107_2044_contact_response/pos3/summary.json)与[双视角视频](outputs/test/act_insert_plug_20261107_2044_contact_response/pos3/episode_000000/rollout.mp4)独立保存，视频 601 帧完整解码；这不代表十布局重新评估后的成功率。
-
-历史诊断显示，pos0 抓取后的完整预测包含约 110 mm 的未来抬升，首次超过 5 mm 的抬升位于第 23–28 个动作；只执行前 10 步就重新预测会反复推迟后段抬升。当时实际下发动作与被选出的预测逐值一致，未见力矩饱和。这是调整为 50 步的依据，但较长执行段仍须重新验证接触和任务成功率。
-
-## 环境与工具
-
-```bash
-# 首次配置或更新现有 mujoco 环境
-bash scripts/setup_mujoco_env.sh
-conda activate mujoco
-# 准备机器人与夹爪资产：已有资产只校验，缺失时下载
-python scripts/setup_assets.py
-# 离线校验已有资产
-python scripts/setup_assets.py --verify-only
-
-# 日常检查
-python -m mujoco_tools.doctor --backend egl
-python -m mujoco_tools.assets.inspect_stl /path/to/part.stl --units mm
-python -B -m pytest -q
-```
-
-统一环境使用 Python 3.12、NumPy 2.2.6、PyTorch 2.9.1+cu128、torchvision 0.24.1 和 TorchCodec 0.8.1。`environment.yml` 定义基础 Conda 环境，`requirements-lock.txt` 固定完整 pip 依赖；安装脚本还将本工作区和 `third_party/lerobot[training,diffusion]` 按 editable 安装。仿真、转换、ACT/Diffusion 训练和部署均在同一个 `mujoco` 中运行。Diffusion 依赖固定为 `diffusers==0.39.0` 和兼容的 `huggingface_hub==1.33.0`，环境依赖检查通过。
-
-环境激活时临时清空 `PYTHONPATH`，避免系统 ROS 2 的 Python 包混入。资产和配置直接使用顶层目录；后续场景放在 `examples/<场景名>/`。
-
-## GitHub 与其他电脑迁移
-
-主仓库保存代码、配置、脚本、环境定义、依赖锁文件及完整的 `assets/`，包括用户提供的两个 STL。`outputs/` 已被 Git 忽略，数据集、checkpoint 和测试视频单独传输，保持原有目录结构。上传或克隆主仓库不会复制这些输出，也不会复制已安装的 Conda 环境。
-
-`third_party/lerobot` 使用 Git 子模块，来源为 `https://github.com/Jaymeeeee/lerobot.git`。首次迁移固定在 `d490e472a5d1a207cfe0255caaaf74b6d66e4656`；实际使用版本以主仓库提交保存的子模块指针为准。保留第三方资产及代码原有的许可证文件。
-
-另一台电脑安装 Git 和 Conda 后执行：
-
-```bash
-git clone --recurse-submodules https://github.com/Jaymeeeee/MuJoCo.git
-cd MuJoCo
-
-# 如克隆时没有带 --recurse-submodules，补运行：
 git submodule update --init --recursive
-
-# 仿真、转换、训练和部署的统一环境
 bash scripts/setup_mujoco_env.sh
+```
+
+日常使用时激活环境，按需选择一条场景命令。
+
+```bash
 conda activate mujoco
-python -m examples.insert_plug build
-python -m examples.insert_plug view
+insert-plug view  # 查看静态场景
+insert-plug demo --backend glfw --viewer --realtime --no-images  # 在窗口观看专家演示
+insert-plug snapshot --backend egl  # 无窗口截图，保存到 outputs/insert_plug/scene_preview/
 ```
 
-当前生成的 `examples/insert_plug/scene.xml` 包含生成机器上的绝对资产路径，迁移后须运行上述 `build` 重新生成。`view` 需要图形桌面；无窗口环境可先用 `python -m mujoco_tools.doctor --backend egl` 检查渲染环境。
-
-转换、训练和部署直接复用上述 `mujoco` 环境，统一通过 `scripts/setup_mujoco_env.sh` 安装和更新。`environment-lerobot.yml` 与 `requirements-lerobot-lock.txt` 只保留为历史转换环境的可选重建定义，日常流程无需切换到 `lerobot`。
-
-统一锁文件针对 Linux x86_64、Python 3.12 和 CUDA 12.8；不同操作系统、CPU 架构或显卡需要另行适配，显卡驱动不随 Git 或 Conda 环境迁移。仅推理需要 checkpoint 中完整的 `pretrained_model/`，包括模型权重、配置和归一化统计；继续训练还需保留 `training_state/`。按 `config/insert_plug_policy.yaml` 指定的相对目录恢复 checkpoint，或运行时传入 `--checkpoint`。数据集、历史测试结果按需恢复到 `outputs/` 中原来的位置，避免覆盖已有批次。
-
-日常同步代码和配置：
+## 采集与保存
 
 ```bash
-git add .
-git diff --cached --stat
-git commit -m "Describe the change"
-git push
+insert-plug collect --backend egl --episodes 10
 ```
 
-`git add .` 会遵守忽略规则；不要使用 `git add -f outputs`。如果修改 LeRobot 子模块，须先在子模块仓库提交并推送，再在主仓库提交新的子模块指针。其他电脑更新时执行 `git pull --recurse-submodules`，再运行 `git submodule update --init --recursive`。
+默认保存到仓库根目录的 **`datasets/insert_plug/run_<时间戳>/`**。每条轨迹各占一个子目录，如 `episode_000000/`，内含同名的 HDF5 观测与动作、YAML 配置、XML 场景和第三视角 MP4。
 
-## 测试产物清理
-
-临时结果统一进入 `outputs/_checks/`，不要在顶层写迁移报告、诊断截图或测试 JSON。一次性验证优先使用系统临时目录，工作结束后删除。
-
-默认清理 **超过 7 天**的临时测试产物。`outputs/datasets/`、历史 `data/`、`assets/` 和其他正常输出不在清理范围内。
+按预设网格批量采集时，下面的命令在每个位置记录两条轨迹。
 
 ```bash
-python -m mujoco_tools.cleanup          # 预览
-python -m mujoco_tools.cleanup --apply  # 按保留规则清理
+python -m examples.insert_plug.data.collect_positions \
+  --episodes-per-position 2 --workers 3 --output datasets/insert_plug/grid_run01
 ```
 
-保留期限见 `config/cleanup.yaml`。清理器不跟随符号链接，范围固定为 `outputs/_checks`。若自行配置定时清理，服务的 `ExecStart` 应使用 `mujoco` 环境中 Python 的绝对路径，并传入 `-m mujoco_tools.cleanup --apply`；定时器属于本机配置，不随仓库迁移。
+## 配置与常用参数
+
+| 配置文件 | 用途 |
+| --- | --- |
+| [config/insert_plug.yaml](config/insert_plug.yaml) | 场景、起始孔和目标孔位置、相机、控制与采样频率 |
+| [config/insert_plug_positions.yaml](config/insert_plug_positions.yaml) | 固定网格布局，批量采集时可用 `--positions-config` 切换 |
+| [config/insert_plug_positions_v2.yaml](config/insert_plug_positions_v2.yaml) | 方环布局，供 v2 和力矩采集使用 |
+
+| `demo` / `collect` 参数 | 用途 |
+| --- | --- |
+| `--config`、`--output` | 指定场景 YAML 和本次采集的批次目录 |
+| `--episodes`、`--seed` | 轨迹条数和起始种子，种子也用作轨迹编号 |
+| `--randomize-mm` | 两个孔位在 X、Y 方向的最大随机偏移量，单位毫米，默认 0 |
+| `--backend` | `auto` 自动选择，`glfw` 用于桌面窗口，`egl` 或 `osmesa` 用于无窗口运行 |
+| `--width`、`--sample-hz`、`--control-hz` | 设置相机图像边长（像素）、记录频率和控制频率 |
+| `--video` | 额外生成首条轨迹的双视角预览，保存到 `outputs/insert_plug/previews/` |
+
+运行 `insert-plug collect --help` 可查看完整参数。力矩采集和 LeRobot 转换示例见[插销任务说明](examples/insert_plug/README.md)。

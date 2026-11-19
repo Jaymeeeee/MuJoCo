@@ -18,7 +18,7 @@ import imageio.v2 as imageio
 import numpy as np
 import yaml
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import DATA_DIR, WORKSPACE_ROOT
 
 ROOT = WORKSPACE_ROOT
 
@@ -275,7 +275,7 @@ def audit_batch(root, *, positions=10, episodes_per_position=10, sample_hz=10.0,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, default=ROOT / 'outputs/datasets/insert_plug')
+    parser.add_argument('--root', type=Path, default=DATA_DIR / 'insert_plug')
     parser.add_argument('--positions-config', type=Path)
     parser.add_argument('--positions', type=int, default=10)
     parser.add_argument('--episodes-per-position', type=int, default=10)

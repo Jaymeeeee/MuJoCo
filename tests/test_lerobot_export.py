@@ -1,4 +1,4 @@
-"""Official API export tests run in the isolated lerobot environment."""
+"""Official API export tests run in the shared mujoco environment."""
 import importlib.util
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from mujoco_tools.lerobot_export import (
-    ACTION_TIMING, ALIGNED_ACTION_TIMING, SourceEpisode, discover_episodes,
+    ACTION_TIMING, ALIGNED_ACTION_TIMING, SourceEpisode, discover_episodes, discover_flat_episodes,
     _validate_depth_payload, export_dataset, inspect_source, validate_source_batch,
 )
 
@@ -55,6 +55,68 @@ def test_discovery_uses_only_complete_explicit_position_groups(tmp_path):
     (source.path.parent / "unpublished.partial").touch()
     with pytest.raises(ValueError, match="four completed"):
         discover_episodes(tmp_path, 1, 1)
+
+
+def flat_source_episode(root, position, index):
+    source = source_episode(root, position, index, aligned=True)
+    destination = root / source.path.parent.name
+    source.path.parent.rename(destination)
+    source.path.parent.parent.rmdir()
+    path = destination / source.path.name
+    with h5py.File(path, "r+") as handle:
+        metadata = json.loads(handle.attrs["metadata_json"])
+        metadata["config"]["collection"] = dict(position_id=f"pos{position}", episode_id=index)
+        handle.attrs["metadata_json"] = json.dumps(metadata)
+    return SourceEpisode(path, position, index)
+
+
+def test_flat_discovery_preserves_one_based_source_ids_and_metadata_positions(tmp_path):
+    last = flat_source_episode(tmp_path, 7, 100)
+    first = flat_source_episode(tmp_path, 42, 1)
+    middle = flat_source_episode(tmp_path, 7, 20)
+    assert discover_flat_episodes(tmp_path, 3) == [first, middle, last]
+    with pytest.raises(ValueError, match="expected 100 episodes"):
+        discover_flat_episodes(tmp_path)
+
+
+@pytest.mark.parametrize("change", ["missing_file", "extra_file", "noncanonical_name"])
+def test_flat_discovery_rejects_incomplete_or_unexpected_entries(tmp_path, change):
+    source = flat_source_episode(tmp_path, 0, 1)
+    if change == "missing_file":
+        source.path.with_suffix(".mp4").unlink()
+    elif change == "extra_file":
+        (source.path.parent / "unfinished.partial").touch()
+    else:
+        source.path.parent.rename(tmp_path / "episode_1")
+    with pytest.raises(ValueError, match="four completed|Unexpected flat episode"):
+        discover_flat_episodes(tmp_path, 1)
+
+
+@pytest.mark.parametrize("changes", [
+    {"episode_id": 0}, {"episode_id": True}, {"position_id": "0"},
+    {"position_id": "pos01"}, {"position_id": None},
+])
+def test_flat_discovery_rejects_metadata_mismatches(tmp_path, changes):
+    source = flat_source_episode(tmp_path, 0, 1)
+    with h5py.File(source.path, "r+") as handle:
+        metadata = json.loads(handle.attrs["metadata_json"])
+        metadata["config"]["collection"].update(changes)
+        handle.attrs["metadata_json"] = json.dumps(metadata)
+    with pytest.raises(ValueError, match="collection position_id|episode_id disagrees"):
+        discover_flat_episodes(tmp_path, 1)
+
+
+def test_flat_cli_selects_flat_discovery_without_rewriting_source_ids(tmp_path, monkeypatch):
+    from mujoco_tools import lerobot_export
+
+    source = flat_source_episode(tmp_path / "bags", 9, 1)
+    calls = []
+    monkeypatch.setattr(lerobot_export, "export_dataset", lambda sources, output, **kwargs:
+                        calls.append((sources, output, kwargs)))
+    output = tmp_path / "lerobot"
+    assert lerobot_export.main(["--source-root", str(tmp_path / "bags"), "--source-layout", "flat",
+                                "--expected-episodes", "1", "--output", str(output)]) == 0
+    assert calls == [([source], output, {"source_root": tmp_path / "bags"})]
 
 
 def test_unsuccessful_source_is_rejected(tmp_path):

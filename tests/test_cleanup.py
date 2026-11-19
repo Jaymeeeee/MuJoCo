@@ -40,7 +40,7 @@ def test_preview_and_apply_only_expired_checks(workspace: Path, capsys: pytest.C
     os.utime(old.parent, (OLD, OLD))
     protected = [
         write_at(workspace, path) for path in (
-            "data/demo.h5", "outputs/datasets/insert_plug/run/episode.h5",
+            "data/demo.h5", "datasets/insert_plug/run/episode.h5",
             "examples/insert_plug/scene.xml", "assets/robot.xml", "outputs/insert_plug/demo/result.json",
             "outputs/other/result.json",
         )

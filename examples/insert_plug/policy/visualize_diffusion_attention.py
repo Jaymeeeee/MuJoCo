@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from mujoco_tools.paths import CONFIG_DIR, OUTPUTS_DIR, WORKSPACE_ROOT
+from mujoco_tools.paths import CONFIG_DIR, OUTPUTS_DIR, WORKSPACE_ROOT, relocated_checkpoint_path, relocated_evaluation_path
 from .output_naming import experiment_output_path, experiment_timestamp
 from .visualize_attention import _colors, _font, _overlay
 
@@ -205,6 +205,7 @@ class DiffusionAttentionPolicy:
 
 
 def _fingerprint(path):
+    path = relocated_evaluation_path(path)
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for part in iter(lambda: stream.read(1024 * 1024), b''):
@@ -247,7 +248,7 @@ def verify_actions(adapter, observations, actions, *, seed, expected_initial_rng
 def _validate_reference(path, *, config, checkpoint, seed, position, duration, n_action_steps, files):
     if path is None:
         return None
-    path = Path(path).expanduser().resolve()
+    path = relocated_evaluation_path(path).resolve()
     reference = json.loads(path.read_text())
     expected = dict(config=config, seed=seed, position=position, requested_duration_s=duration,
                     control_hz=10, action_hold_s=.1, physics_timestep_s=.001,
@@ -256,7 +257,7 @@ def _validate_reference(path, *, config, checkpoint, seed, position, duration, n
         if reference.get(key) != value:
             raise ValueError(f'Reference report differs in {key}')
     policy = reference['policy']
-    if (Path(policy['checkpoint']).resolve() != checkpoint or policy.get('policy_type') != 'diffusion'
+    if (relocated_checkpoint_path(policy['checkpoint']).resolve() != checkpoint or policy.get('policy_type') != 'diffusion'
             or policy.get('n_action_steps') != n_action_steps
             or policy.get('config_sha256') != files['config.json']['sha256']):
         raise ValueError('Reference checkpoint or execution settings differ')
@@ -327,8 +328,8 @@ def run_visualization(*, checkpoint, output=None, position='0', config=None,
     saved = json.loads((checkpoint / 'config.json').read_text())
     if saved.get('type') != 'diffusion':
         raise ValueError('A Diffusion checkpoint is required')
-    scene_config = Path(config or CONFIG_DIR / 'insert_plug.yaml').expanduser().resolve()
-    positions_config = Path(positions_config or CONFIG_DIR / 'insert_plug_positions.yaml').expanduser().resolve()
+    scene_config = relocated_evaluation_path(config or CONFIG_DIR / 'insert_plug.yaml').resolve()
+    positions_config = relocated_evaluation_path(positions_config or CONFIG_DIR / 'insert_plug_positions.yaml').resolve()
     layouts = select_layouts(load_config(scene_config), position, positions_config)
     if len(layouts) != 1:
         raise ValueError('Choose exactly one fixed position')

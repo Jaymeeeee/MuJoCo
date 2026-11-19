@@ -296,6 +296,7 @@ def test_diffusion_batch_is_audited_with_saved_scheduler_and_runtime_window(diff
 
 @pytest.mark.parametrize('field,value,match', [
     ('policy_type', 'act', 'Expected diffusion'),
+    ('denoiser_type', 'dit', 'Diffusion denoiser_type'),
     ('horizon', 32, 'Diffusion horizon'),
     ('n_obs_steps', 2, 'Diffusion n_obs_steps'),
     ('num_inference_steps', 25, 'Diffusion num_inference_steps'),

@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import WORKSPACE_ROOT, relocated_checkpoint_path, relocated_evaluation_path
 
 ROOT = WORKSPACE_ROOT
 POSITIONS = tuple(f'pos{i}' for i in range(10))
@@ -53,7 +53,7 @@ def timestamp(seconds):
 
 
 def resolved_checkpoint(path):
-    path = Path(path).expanduser().resolve()
+    path = relocated_checkpoint_path(path).resolve()
     return path / 'pretrained_model' if (path / 'pretrained_model').is_dir() else path
 
 
@@ -103,15 +103,17 @@ def check_video(path, expected_frames, width, height, mode='full'):
 
 
 def audit_episode(folder, result, *, position, repetition, checkpoint, layout,
-                  video_check='full', n_action_steps=10, duration=60.0, policy_config=None):
+                  video_check='full', n_action_steps=10, duration=60.0, policy_config=None,
+                  expected_seed=None):
     """Check saved evidence without changing an episode or trusting group totals."""
+    seed = int(position[3:]) * REPETITIONS + repetition if expected_seed is None else expected_seed
     for key, expected in [('position', position), ('repetition', repetition),
                           ('episode_index', repetition),
-                          ('seed', int(position[3:]) * REPETITIONS + repetition)]:
+                          ('seed', seed)]:
         require(result.get(key) == expected and type(result.get(key)) is type(expected),
                 f'{key} must be {expected!r}, got {result.get(key)!r}')
     policy = result['policy']
-    require(Path(policy['checkpoint']).expanduser().resolve() == checkpoint, 'Checkpoint path mismatch')
+    require(relocated_checkpoint_path(policy['checkpoint']).resolve() == checkpoint, 'Checkpoint path mismatch')
     expected_type = policy_config.get('type') if policy_config is not None else 'act'
     require(expected_type in {'act', 'diffusion'}, 'Unsupported checkpoint policy type')
     require(policy.get('policy_type') == expected_type, f'Expected {expected_type} policy')
@@ -121,6 +123,8 @@ def audit_episode(folder, result, *, position, repetition, checkpoint, layout,
         require(policy.get('checkpoint_n_action_steps') == policy_config.get('n_action_steps'),
                 'Saved checkpoint n_action_steps mismatch')
         if expected_type == 'diffusion':
+            require(policy.get('denoiser_type', 'unet') == policy_config.get('denoiser_type', 'unet'),
+                    'Diffusion denoiser_type differs from checkpoint')
             horizon, observations = policy_config.get('horizon'), policy_config.get('n_obs_steps')
             require(type(horizon) is int and type(observations) is int
                     and 1 <= observations <= horizon, 'Invalid Diffusion horizon/n_obs_steps')
@@ -260,7 +264,7 @@ def check_position_summary(folder, rows, checkpoint):
     require(summary.get('complete') == (len(rows) == REPETITIONS), 'Position summary complete flag mismatch')
     require(summary.get('successes') == sum(row.get('success') is True for row in rows),
             'Position summary success count mismatch')
-    require(Path(summary['checkpoint']).expanduser().resolve() == checkpoint, 'Position summary checkpoint mismatch')
+    require(relocated_checkpoint_path(summary['checkpoint']).resolve() == checkpoint, 'Position summary checkpoint mismatch')
     reported = summary['results']
     require(len(reported) == len(rows), 'Position summary row count mismatch')
     for saved, actual in zip(reported, rows):
@@ -309,11 +313,11 @@ def process_failures(document, source):
 def summarize_batch(root, *, checkpoint, positions_config=ROOT / 'config/insert_plug_positions.yaml',
                     video_check='full', n_action_steps=10, duration=60.0):
     """Read a batch and return (summary, rows); never write artifacts here."""
-    root = Path(root).expanduser().resolve()
+    root = relocated_evaluation_path(root).resolve()
     require(root.is_dir() and not root.is_symlink(), f'Batch root does not exist: {root}')
     require(video_check in {'full', 'metadata', 'none'}, 'Unknown video audit mode')
     checkpoint = resolved_checkpoint(checkpoint)
-    positions_config = Path(positions_config).expanduser().resolve()
+    positions_config = relocated_evaluation_path(positions_config).resolve()
     manifest_bytes = positions_config.read_bytes()
     manifest = yaml.safe_load(manifest_bytes)
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
@@ -468,7 +472,7 @@ def totals(rows):
 
 def write_reports(root, summary, rows):
     """Called only by the explicit --write CLI; never alter source reports."""
-    root = Path(root).resolve()
+    root = relocated_evaluation_path(root).resolve()
     require(str(root) == summary['root'], 'Report destination must be the audited batch root')
     fields = ['position', 'repetition', 'episode_index', 'seed', 'policy_type', 'success', 'task_success', 'contact_clean',
               'stop_reason', 'runtime_error', 'simulation_seconds', 'wall_seconds', 'completed_control_steps',

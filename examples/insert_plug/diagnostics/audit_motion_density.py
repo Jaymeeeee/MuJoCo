@@ -17,7 +17,7 @@ import h5py
 import mujoco
 import numpy as np
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import DATA_DIR, WORKSPACE_ROOT
 
 ROOT = WORKSPACE_ROOT
 
@@ -140,7 +140,7 @@ def representative(row):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, default=ROOT/'outputs/datasets/insert_plug')
+    parser.add_argument('--source', type=Path, default=DATA_DIR / 'insert_plug')
     parser.add_argument('--output', type=Path, default=ROOT/'outputs/_checks/insert_plug_motion_density')
     args = parser.parse_args()
     total, phases, hashes, reps = Counter(), defaultdict(Counter), defaultdict(set), {}

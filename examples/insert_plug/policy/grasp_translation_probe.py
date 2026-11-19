@@ -221,7 +221,7 @@ def run(args):
         protected[str(old_summary)] = sha256(old_summary)
     protocol = dict(created_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(),
         position='pos2', selection='Chosen before shifted rollouts: both policies previously 10/10 successful at pos2; seed20 successful for both.',
-        prior_evidence={model: str(WORKSPACE_ROOT/f'outputs/test/{model}_insert_plug_v1_rgbd_ind_20261110_100724/pos2/episode_000000/result.json') for model in checkpoints},
+        prior_evidence={model: str(WORKSPACE_ROOT/f'outputs/test/{model}_insert_plug_v1_rgbd/ind/20261110_100724/pos2/episode_000000/result.json') for model in checkpoints},
         seed=20, distance_m=.03, control_hz=10, physics_hz=1000, n_action_steps=32,
         horizon=64, control_steps=128, duration_s=12.8, max_episodes=10,
         baseline_gate='Run both baselines first; require physical lift in each before any shifted rollout.',

@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 import mujoco_tools.lerobot_policy as adapter
+from mujoco_tools import paths
 
 
 def checkpoint(tmp_path):
@@ -32,6 +33,22 @@ def test_resolves_both_checkpoint_directory_forms(tmp_path):
     path = checkpoint(tmp_path)
     assert adapter.resolve_checkpoint(path) == path
     assert adapter.resolve_checkpoint(path.parent) == path
+
+
+def test_historical_workspace_checkpoint_resolves_after_move(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, 'OUTPUTS_DIR', tmp_path / 'outputs')
+    run = paths.OUTPUTS_DIR / 'train/example'
+    old = run / 'artifacts/checkpoints'
+    model = checkpoint(old)
+    (old / 'last').symlink_to('030000', target_is_directory=True)
+    assert adapter.resolve_checkpoint(old / 'last') == model
+    old.rename(run / 'checkpoints')
+    moved = run / 'checkpoints/030000/pretrained_model'
+    assert adapter.resolve_checkpoint(model) == moved
+    assert adapter.resolve_checkpoint(old / 'last') == moved
+    assert paths.relocated_checkpoint_path(model / 'config.json') == moved / 'config.json'
+    external = tmp_path / 'external/artifacts/checkpoints/030000'
+    assert paths.relocated_checkpoint_path(external) == external
 
 
 def test_missing_normalization_statistics_fail_before_import(tmp_path):
@@ -400,9 +417,11 @@ def lightweight_diffusion(monkeypatch):
 
 
 @pytest.mark.parametrize('saved_inference_steps,effective_steps', [(None, 100), (25, 25)])
+@pytest.mark.parametrize('denoiser_type', [None, 'unet', 'dit'])
 def test_diffusion_load_preserves_horizon_scheduler_and_saved_processors(
-        tmp_path, lightweight_diffusion, saved_inference_steps, effective_steps):
-    path = diffusion_checkpoint(tmp_path, num_inference_steps=saved_inference_steps)
+        tmp_path, lightweight_diffusion, saved_inference_steps, effective_steps, denoiser_type):
+    updates = {} if denoiser_type is None else {'denoiser_type': denoiser_type}
+    path = diffusion_checkpoint(tmp_path, num_inference_steps=saved_inference_steps, **updates)
     before = {file.name: file.read_bytes() for file in path.iterdir()}
     instance = adapter.LeRobotPolicy(path, device='cpu', n_action_steps=32)
     calls = lightweight_diffusion
@@ -418,6 +437,8 @@ def test_diffusion_load_preserves_horizon_scheduler_and_saved_processors(
         'postprocessor_overrides': {'device_processor': {'device': 'cpu'}}}
     metadata = instance.metadata()
     assert metadata['policy_type'] == 'diffusion'
+    assert metadata['denoiser_type'] == (denoiser_type or 'unet')
+    assert getattr(config, 'denoiser_type', 'unet') == metadata['denoiser_type']
     assert metadata['horizon'] == metadata['chunk_size'] == metadata['checkpoint_n_action_steps'] == 64
     assert metadata['n_action_steps'] == 32 and metadata['n_obs_steps'] == 1
     assert metadata['noise_scheduler_type'] == 'DDPM' and metadata['num_train_timesteps'] == 100

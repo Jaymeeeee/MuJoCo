@@ -14,12 +14,13 @@ from examples.insert_plug.policy import compare_generalization as comparison
 def inputs(tmp_path):
     checkpoints = {}
     for kind in ('act', 'diffusion'):
-        path = tmp_path/kind/'artifacts/checkpoints/030000/pretrained_model'
+        path = tmp_path / f'{kind}_insert_plug_v1_rgb_20261108_220529' / 'checkpoints/030000/pretrained_model'
         path.mkdir(parents=True)
         saved = (dict(type='act', chunk_size=64, n_action_steps=64, temporal_ensemble_coeff=None)
                  if kind == 'act' else dict(type='diffusion', horizon=64, n_obs_steps=1, n_action_steps=64,
                                            noise_scheduler_type='DDPM', num_train_timesteps=100,
                                            num_inference_steps=None, normalization_mapping={'ACTION': 'MIN_MAX'}))
+        saved['input_features'] = {'observation.images.head': {'type': 'VISUAL', 'shape': [3, 256, 256]}}
         (path/'config.json').write_text(json.dumps(saved))
         (path/'model.safetensors').write_bytes(b'fixture')
         for name in ('policy_preprocessor.json', 'policy_postprocessor.json'):
@@ -172,10 +173,27 @@ def test_checkpoint_guards_fail_before_mutating_outputs(inputs, kind, updates, m
     assert not inputs['output'].exists()
 
 
+def test_default_comparison_groups_models_and_report_by_split(inputs, monkeypatch, tmp_path):
+    monkeypatch.setattr(comparison.evaluate, 'ROOT', tmp_path)
+    monkeypatch.setattr(comparison.evaluate, 'timestamp', lambda: '2026-11-11T16:30:45+00:00')
+    argv = inputs['argv'][:]
+    index = argv.index('--output')
+    del argv[index:index + 2]
+    args = comparison.parse_args([*argv, '--split', 'ood'])
+    report, models = comparison.prepare_comparison(args)
+    for kind, cfg in [('act_diffusion', report), *models.items()]:
+        path = tmp_path / 'outputs/test' / f'{kind}_insert_plug_v1_rgb' / 'ood/20261112_003045'
+        assert Path(cfg['output']) == path and path.is_dir()
+        assert cfg['started_at'] == report['started_at'] and cfg['evaluation_split'] == 'ood'
+    assert not (Path(report['output']) / 'act').exists()
+    with pytest.raises(FileExistsError):
+        comparison.prepare_comparison(args)
+
+
 def test_prepared_models_cannot_use_different_manifest_hashes(inputs, monkeypatch):
     original = comparison.evaluate.prepare
-    def altered(args):
-        config = original(args)
+    def altered(args, **kwargs):
+        config = original(args, **kwargs)
         if config['policy_type'] == 'act':
             config['positions_manifest_sha256'] = 'wrong'
         return config

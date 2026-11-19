@@ -1,5 +1,5 @@
 # Paths are resolved relative to the MuJoCo workspace root.
-checkpoint: outputs/train/act_insert_plug_20261107_2044/artifacts/checkpoints/030000
+checkpoint: outputs/train/act_insert_plug_20261107_2044/checkpoints/030000
 scene_config: config/insert_plug.yaml
 positions_config: config/insert_plug_positions.yaml
 # 0..9 selects a collected layout; 'all' evaluates all ten; 'config' uses scene YAML positions.

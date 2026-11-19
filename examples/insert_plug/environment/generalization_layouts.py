@@ -19,7 +19,7 @@ import yaml
 
 from examples.insert_plug.environment.layouts import PositionsDumper
 from examples.insert_plug.environment.scene import load_config
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import DATA_DIR, WORKSPACE_ROOT, checkpoint_dataset_path, relocated_checkpoint_path
 
 
 def sha256(path):
@@ -69,10 +69,10 @@ def audit_training_data(dataset_root, training_manifest, checkpoint_train_config
         raise ValueError('Training layout pairs must be distinct')
     checkpoint_records = []
     for path in checkpoint_train_configs:
-        path = Path(path).resolve()
+        path = relocated_checkpoint_path(path).resolve()
         data = json.loads(path.read_text())['dataset']
-        root = Path(data['root']).resolve()
-        if root != dataset_root / 'lerobot':
+        root = data['root']
+        if checkpoint_dataset_path(root) != dataset_root / 'lerobot':
             raise ValueError(f'Checkpoint uses a different dataset: {path}: {root}')
         if data.get('episodes') is not None or data.get('exclude_episodes'):
             raise ValueError(f'Checkpoint episode filtering needs a separate source audit: {path}')
@@ -148,7 +148,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, default=WORKSPACE_ROOT/'config/insert_plug.yaml')
     parser.add_argument('--training-manifest', type=Path, default=WORKSPACE_ROOT/'config/insert_plug_positions.yaml')
-    parser.add_argument('--dataset-root', type=Path, default=WORKSPACE_ROOT/'outputs/datasets/insert_plug_v1')
+    parser.add_argument('--dataset-root', type=Path, default=DATA_DIR / 'insert_plug_v1')
     parser.add_argument('--checkpoint-train-config', action='append', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, default=WORKSPACE_ROOT/'config/insert_plug_generalization_v1.yaml')
     parser.add_argument('--output', type=Path, default=WORKSPACE_ROOT/'outputs/_checks/insert_plug_generalization_v1')

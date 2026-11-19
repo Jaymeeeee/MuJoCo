@@ -19,6 +19,8 @@ import re
 import h5py
 import numpy as np
 
+from mujoco_tools.paths import DATA_DIR
+
 TASK = "Pick the plug from the orange holder and insert it into the green holder."
 CAMERAS = ("head", "wrist")
 JOINT_NAMES = [f"fr3_joint{i}" for i in range(1, 8)] + ["gripper_width"]
@@ -56,6 +58,49 @@ def discover_episodes(source_root: Path, positions: int = 10,
             raise ValueError(f"{folder}: expected {episodes_per_position} episodes, got {len(candidates)}")
         episodes.extend(sorted(candidates, key=lambda item: item.source_episode_index))
     return episodes
+
+
+def discover_flat_episodes(source_root: Path, expected_episodes: int = 100) -> list[SourceEpisode]:
+    """Read flat episode folders, preserving IDs from their collection metadata.
+
+    Source episode IDs need not start at zero. LeRobot assigns its own dense
+    episode_index during export; source.episode_index retains the original ID.
+    """
+    source_root = Path(source_root)
+    if expected_episodes < 1:
+        raise ValueError("Expected episode count must be positive")
+    if not source_root.is_dir() or source_root.is_symlink():
+        raise ValueError(f"Missing regular source directory: {source_root}")
+    episodes = []
+    for folder in source_root.iterdir():
+        match = re.fullmatch(r"episode_(\d{6})", folder.name)
+        if not match or not folder.is_dir() or folder.is_symlink():
+            raise ValueError(f"Unexpected flat episode entry: {folder}")
+        stem = folder.name
+        entries = list(folder.iterdir())
+        expected = {f"{stem}.{suffix}" for suffix in ("h5", "yaml", "xml", "mp4")}
+        if ({path.name for path in entries} != expected
+                or any(not path.is_file() or path.is_symlink() for path in entries)):
+            raise ValueError(f"Episode must contain the four completed recording files: {folder}")
+        source_index = int(match.group(1))
+        path = folder / f"{stem}.h5"
+        with h5py.File(path, "r") as handle:
+            try:
+                metadata = json.loads(handle.attrs["metadata_json"])
+                collection = metadata["config"]["collection"]
+                position_name = collection["position_id"]
+                episode_id = collection["episode_id"]
+            except (KeyError, TypeError, json.JSONDecodeError) as error:
+                raise ValueError(f"Missing or invalid collection metadata: {path}") from error
+        position_match = re.fullmatch(r"pos(0|[1-9]\d*)", position_name) if isinstance(position_name, str) else None
+        if position_match is None:
+            raise ValueError(f"Invalid collection position_id: {path}")
+        if type(episode_id) is not int or episode_id != source_index:
+            raise ValueError(f"Collection episode_id disagrees with directory: {path}")
+        episodes.append(SourceEpisode(path, int(position_match.group(1)), source_index))
+    if len(episodes) != expected_episodes:
+        raise ValueError(f"{source_root}: expected {expected_episodes} episodes, got {len(episodes)}")
+    return sorted(episodes, key=lambda item: item.source_episode_index)
 
 
 def inspect_source(source: SourceEpisode) -> dict:
@@ -379,16 +424,24 @@ def export_dataset(sources: list[SourceEpisode], output: Path, *,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, default=Path("outputs/datasets/insert_plug"))
-    parser.add_argument("--output", type=Path, default=Path("outputs/datasets/insert_plug/lerobot"))
+    parser.add_argument("--source-root", type=Path, default=DATA_DIR / "insert_plug")
+    parser.add_argument("--output", type=Path, default=DATA_DIR / "insert_plug/lerobot")
+    parser.add_argument("--source-layout", choices=("positions", "flat"), default="positions",
+                        help="positions: posN/episode_N; flat: episode_N directly under source-root")
     parser.add_argument("--positions", type=int, default=10)
     parser.add_argument("--episodes-per-position", type=int, default=10)
+    parser.add_argument("--expected-episodes", type=int, default=100,
+                        help="Exact episode count required for --source-layout flat")
     args = parser.parse_args(argv)
-    if args.positions < 1 or args.episodes_per_position < 1:
+    if args.source_layout == "positions" and (args.positions < 1 or args.episodes_per_position < 1):
         parser.error("Position and episode counts must be positive")
+    if args.source_layout == "flat" and args.expected_episodes < 1:
+        parser.error("Expected episode count must be positive")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
-    sources = discover_episodes(args.source_root, args.positions, args.episodes_per_position)
+    sources = (discover_flat_episodes(args.source_root, args.expected_episodes)
+               if args.source_layout == "flat" else
+               discover_episodes(args.source_root, args.positions, args.episodes_per_position))
     export_dataset(sources, args.output, source_root=args.source_root)
     return 0

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import WORKSPACE_ROOT, relocated_evaluation_path
 
 ROOT = WORKSPACE_ROOT
 
@@ -234,9 +234,10 @@ def main(argv=None):
     from examples.insert_plug.policy.rollout import select_layouts, run_episode, _seed_policy
     from examples.insert_plug.environment.simulation import Simulation
     from mujoco_tools.lerobot_policy import LeRobotPolicy
-    batch = json.loads((args.batch_root/'eval_config.json').read_text())
-    config = load_config(args.batch_root/'configs/scene_config.yaml')
-    _, config = select_layouts(config, args.position, args.batch_root/'configs/positions_config.yaml')[0]
+    batch_root = relocated_evaluation_path(args.batch_root)
+    batch = json.loads((batch_root/'eval_config.json').read_text())
+    config = load_config(batch_root/'configs/scene_config.yaml')
+    _, config = select_layouts(config, args.position, batch_root/'configs/positions_config.yaml')[0]
     policy = LeRobotPolicy(batch['checkpoint'], device='cuda', n_action_steps=batch['n_action_steps'])
     _seed_policy(args.seed)
     out.mkdir(parents=True)

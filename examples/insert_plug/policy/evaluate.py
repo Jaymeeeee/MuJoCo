@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import WORKSPACE_ROOT, relocated_checkpoint_path, relocated_evaluation_path
 
 ROOT = WORKSPACE_ROOT
 EPISODES = 10
@@ -46,7 +46,7 @@ def write_json(path, value):
 
 def workspace_path(value):
     path = Path(value).expanduser()
-    return (path if path.is_absolute() else ROOT / path).resolve()
+    return relocated_evaluation_path(path if path.is_absolute() else ROOT / path).resolve()
 
 
 def fingerprint(path):
@@ -84,6 +84,7 @@ def policy_settings(saved, n_action_steps):
             raise ValueError('Diffusion requires positive n_obs_steps <= horizon')
         maximum = horizon - observations + 1
         settings = dict(policy_type=kind, horizon=horizon, n_obs_steps=observations,
+                        denoiser_type=saved.get('denoiser_type', 'unet'),
                         noise_scheduler_type=saved.get('noise_scheduler_type'),
                         num_train_timesteps=saved.get('num_train_timesteps'),
                         checkpoint_num_inference_steps=saved.get('num_inference_steps'),
@@ -98,8 +99,20 @@ def policy_settings(saved, n_action_steps):
     return settings
 
 
-def default_output_name(saved, training_run, manifest, split, started_at):
-    """Name a batch by its model, data variant, layout split and own start time."""
+def training_run_name(checkpoint):
+    step = checkpoint.parent if checkpoint.name == 'pretrained_model' else checkpoint
+    if step.parent.name == 'checkpoints':
+        run = step.parent.parent
+        return run.parent.name if run.name == 'artifacts' else run.name
+    return f'{step.name}_{datetime.now().strftime("%Y%m%d_%H%M%S_%f")}'
+
+
+def batch_output_path(group, split, started_at):
+    local_start = datetime.fromisoformat(started_at).astimezone(ZoneInfo('Asia/Shanghai'))
+    return Path(group) / split / local_start.strftime('%Y%m%d_%H%M%S')
+
+
+def batch_identity(saved, training_run):
     version = re.search(r'(?:^|_)insert_plug_(v\d+)(?:_|$)', training_run)
     if version is None:
         raise ValueError('Cannot infer the task version from the training run; specify --output')
@@ -110,23 +123,32 @@ def default_output_name(saved, training_run, manifest, split, started_at):
         modality = 'rgb'
     else:
         raise ValueError('Cannot infer RGB/RGB-D inputs from the checkpoint; specify --output')
-    if split is None:
-        training_path = ROOT / 'config/insert_plug_positions.yaml'
-        training = (yaml.safe_load(training_path.read_text(encoding='utf-8'))
-                    if training_path.is_file() else {})
+    model = saved['type']
+    if model == 'diffusion' and saved.get('denoiser_type') == 'dit':
+        model = 'diffusion_dit'
+    return model, f'insert_plug_{version.group(1)}_{modality}'
 
-        def layouts(value):
-            return [(row['source_xy'], row['target_xy']) for row in value.get('positions', [])]
 
-        if layouts(manifest) == layouts(training) and layouts(training):
-            split = 'ind'
-        elif manifest.get('split') in {'ood', 'heldout_coordinate_range', 'generalization_v1'}:
-            split = 'ood'
-        else:
-            raise ValueError('Cannot infer ind/ood for this layout manifest; specify --split or --output')
-    local_start = datetime.fromisoformat(started_at).astimezone(ZoneInfo('Asia/Shanghai'))
-    return (f'{saved["type"]}_insert_plug_{version.group(1)}_{modality}_{split}_'
-            f'{local_start:%Y%m%d_%H%M%S}'), split
+def layout_split(manifest):
+    training_path = ROOT / 'config/insert_plug_positions.yaml'
+    training = (yaml.safe_load(training_path.read_text(encoding='utf-8'))
+                if training_path.is_file() else {})
+
+    def layouts(value):
+        return [(row['source_xy'], row['target_xy']) for row in value.get('positions', [])]
+
+    if layouts(manifest) == layouts(training) and layouts(training):
+        return 'ind'
+    if manifest.get('split') in {'ood', 'heldout_coordinate_range', 'generalization_v1'}:
+        return 'ood'
+    raise ValueError('Cannot infer ind/ood for this layout manifest; specify --split or --output')
+
+
+def default_output_name(saved, training_run, manifest, split, started_at):
+    """Locate a batch by its model, dataset, layout split and own start time."""
+    model, dataset = batch_identity(saved, training_run)
+    split = split or layout_split(manifest)
+    return batch_output_path(f'{model}_{dataset}', split, started_at), split
 
 
 def parse_args(argv=None):
@@ -135,7 +157,7 @@ def parse_args(argv=None):
     parser.add_argument('--checkpoint', help='Override the configured checkpoint')
     parser.add_argument('--positions-config', help='Override the fixed-layout manifest from the policy YAML')
     parser.add_argument('--output', help='New directory; defaults to outputs/test/'
-                        '<model>_insert_plug_<version>_<rgb|rgbd>_<ind|ood>_<YYYYmmdd_HHMMSS>')
+                        '<model>_insert_plug_<version>_<rgb|rgbd>/<ind|ood>/<YYYYmmdd_HHMMSS>')
     parser.add_argument('--split', choices=('ind', 'ood'),
                         help='Layout split label; inferred for known training/held-out layouts')
     parser.add_argument('--workers', type=int, default=4)
@@ -153,9 +175,9 @@ def parse_args(argv=None):
     return args
 
 
-def prepare(args):
+def prepare(args, *, started_at=None):
     """Validate inputs and freeze provenance before any simulation is launched."""
-    started_at = timestamp()
+    started_at = started_at or timestamp()
     policy_path = workspace_path(args.policy_config)
     policy = yaml.safe_load(policy_path.read_text(encoding='utf-8'))
     allowed = {'checkpoint', 'scene_config', 'positions_config', 'device',
@@ -167,9 +189,7 @@ def prepare(args):
     from mujoco_tools.lerobot_policy import resolve_checkpoint
     checkpoint = resolve_checkpoint(requested)
     step = checkpoint.parent if checkpoint.name == 'pretrained_model' else checkpoint
-    training_run = (step.parent.parent.parent.name if step.parent.name == 'checkpoints'
-                    and step.parent.parent.name == 'artifacts' else
-                    f'{step.name}_{datetime.now().strftime("%Y%m%d_%H%M%S_%f")}')
+    training_run = training_run_name(checkpoint)
     output = workspace_path(args.output) if args.output else None
     if output is not None and output.exists():
         raise FileExistsError(f'Output already exists; preserved without changes: {output}')
@@ -207,7 +227,7 @@ def prepare(args):
     split = args.split
     if output is None:
         name, split = default_output_name(saved, training_run, manifest, split, started_at)
-        output = workspace_path(f'outputs/test/{name}')
+        output = workspace_path(Path('outputs/test') / name)
         if output.exists():
             raise FileExistsError(f'Output already exists; preserved without changes: {output}')
     configuration = dict(
@@ -264,7 +284,7 @@ def command_for(configuration, index):
 
 def validate_position(configuration, index):
     """Accept failed physical outcomes only when every requested record exists."""
-    directory = Path(configuration['output']) / f'pos{index}'
+    directory = relocated_evaluation_path(configuration['output']) / f'pos{index}'
     summary = json.loads((directory / 'summary.json').read_text(encoding='utf-8'))
     if not summary.get('complete') or summary.get('episodes_requested') != EPISODES or summary.get('episodes_completed') != EPISODES:
         raise ValueError(f'Incomplete summary: {directory}')
@@ -276,6 +296,7 @@ def validate_position(configuration, index):
     layout = configuration['positions'][index]
     expected_scene = deepcopy(configuration['scene_snapshot'])
     expected_scene['board'].update(source_xy=layout['source_xy'], target_xy=layout['target_xy'])
+    checkpoint = relocated_checkpoint_path(configuration['checkpoint'])
     successes = 0
     for repeat, row in enumerate(summary['results']):
         folder = directory / f'episode_{repeat:06d}'
@@ -297,7 +318,7 @@ def validate_position(configuration, index):
                 or contacts.get('checks') != 0 or report.get('contact_checks') != 0):
             raise ValueError(f'Disabled contact diagnostics must remain unmeasured: {folder}')
         policy = report.get('policy', {})
-        if (policy.get('checkpoint') != configuration['checkpoint'] or
+        if (not policy.get('checkpoint') or relocated_checkpoint_path(policy['checkpoint']) != checkpoint or
                 policy.get('n_action_steps') != configuration['n_action_steps'] or
                 policy.get('config_sha256') != configuration['checkpoint_files']['config.json']['sha256']):
             raise ValueError(f'Policy provenance differs: {folder}')

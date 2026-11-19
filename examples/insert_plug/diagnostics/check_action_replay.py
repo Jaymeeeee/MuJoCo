@@ -26,7 +26,7 @@ import h5py
 import numpy as np
 import yaml
 
-from mujoco_tools.paths import WORKSPACE_ROOT
+from mujoco_tools.paths import DATA_DIR, WORKSPACE_ROOT
 
 ROOT = WORKSPACE_ROOT
 
@@ -210,7 +210,8 @@ def replay_episode(path, *, action_dtype='float32', video=None, contact_diagnost
         physical_success = bool(final['final_success'] and failure is None and completed_steps == total_steps)
         clean = contact_report['unsafe_contact_count'] == 0 if monitor is not None else None
         return dict(
-            source_hdf5=str(Path(path).resolve().relative_to(ROOT)),
+            source_hdf5=str(Path(path).resolve().relative_to(ROOT)
+                            if Path(path).resolve().is_relative_to(ROOT) else Path(path).resolve()),
             position=Path(path).parent.parent.name, episode=Path(path).stem,
             source_success=True, action_dtype=action_dtype, frames=len(actions),
             control_hz=sim.control_hz, physics_hz=1 / sim.model.opt.timestep,
@@ -266,7 +267,7 @@ def summarize(results):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, default=ROOT / 'outputs/datasets/insert_plug')
+    parser.add_argument('--root', type=Path, default=DATA_DIR / 'insert_plug')
     parser.add_argument('--episode', type=Path, action='append', help='Check selected source HDF5 files only')
     parser.add_argument('--workers', type=int, default=3)
     parser.add_argument('--action-dtype', choices=('float32', 'float64'), default='float32',

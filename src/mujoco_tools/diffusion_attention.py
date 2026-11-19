@@ -1,7 +1,7 @@
 """Capture the image encoder's spatial pooling in LeRobot Diffusion inference.
 
-This Diffusion architecture uses convolutional encoders and a conditional U-Net,
-not an action-query Transformer. Each SpatialSoftmax channel is a separately
+The visual encoder uses convolution and SpatialSoftmax pooling with either the
+U-Net or DiT action denoiser. Each SpatialSoftmax channel is a separately
 normalized probability map whose expectation is one learned keypoint. The mean
 map below weights keypoints equally; it is neither action-conditioned attention
 nor causal pixel attribution. Every camera's mean map sums to one, so total map

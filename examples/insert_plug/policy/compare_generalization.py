@@ -30,9 +30,11 @@ def parse_args(argv=None):
     parser.add_argument('--act-checkpoint', required=True)
     parser.add_argument('--diffusion-checkpoint', required=True)
     parser.add_argument('--positions-config', required=True)
-    parser.add_argument('--output', required=True, help='New comparison directory')
-    parser.add_argument('--act-output', help='New ACT batch directory; defaults to OUTPUT/act')
-    parser.add_argument('--diffusion-output', help='New Diffusion batch directory; defaults to OUTPUT/diffusion')
+    parser.add_argument('--output', help='New comparison directory; otherwise group each model and '
+                        'the comparison under outputs/test by dataset, split and start time')
+    parser.add_argument('--act-output', help='Override the ACT directory (OUTPUT/act with explicit --output)')
+    parser.add_argument('--diffusion-output', help='Override the Diffusion directory (OUTPUT/diffusion with explicit --output)')
+    parser.add_argument('--split', choices=('ind', 'ood'), help='Layout split for a custom manifest')
     parser.add_argument('--policy-config', default='config/insert_plug_policy.yaml')
     parser.add_argument('--workers', type=int, default=4, help='One shared worker limit across both models')
     parser.add_argument('--n-action-steps', type=int, default=32)
@@ -45,12 +47,23 @@ def parse_args(argv=None):
     return args
 
 
-def preflight(args):
-    """Read and validate critical inputs before claiming any output directory."""
-    from mujoco_tools.lerobot_policy import resolve_checkpoint
-
-    output = evaluate.workspace_path(args.output)
-    model_outputs = {kind: evaluate.workspace_path(getattr(args, f'{kind}_output') or output/kind)
+def comparison_outputs(args, checkpoints, saved, manifest, started_at):
+    split = getattr(args, 'split', None)
+    if args.output:
+        output = evaluate.workspace_path(args.output)
+        defaults = {kind: output / kind for kind in MODEL_ORDER}
+    else:
+        split = split or evaluate.layout_split(manifest)
+        act, act_dataset = evaluate.batch_identity(saved['act'], evaluate.training_run_name(checkpoints['act']))
+        diffusion, diffusion_dataset = evaluate.batch_identity(
+            saved['diffusion'], evaluate.training_run_name(checkpoints['diffusion']))
+        if act_dataset != diffusion_dataset:
+            raise ValueError('Cannot name a comparison across different datasets or modalities; specify --output')
+        root = evaluate.workspace_path('outputs/test')
+        output = root / evaluate.batch_output_path(f'{act}_{diffusion}_{act_dataset}', split, started_at)
+        defaults = {kind: root / evaluate.batch_output_path(f'{model}_{act_dataset}', split, started_at)
+                    for kind, model in [('act', act), ('diffusion', diffusion)]}
+    model_outputs = {kind: evaluate.workspace_path(getattr(args, f'{kind}_output') or defaults[kind])
                      for kind in MODEL_ORDER}
     paths = [output, *model_outputs.values()]
     if len(set(paths)) != 3:
@@ -64,6 +77,14 @@ def preflight(args):
             raise ValueError('Model outputs cannot contain the comparison or other model output directory')
         if path.is_relative_to(output/'configs'):
             raise ValueError('The comparison configs directory is reserved for frozen inputs')
+    return output, model_outputs, split
+
+
+def preflight(args):
+    """Read and validate critical inputs before claiming any output directory."""
+    from mujoco_tools.lerobot_policy import resolve_checkpoint
+
+    started_at = evaluate.timestamp()
     if (not math.isfinite(args.duration) or args.duration <= 0
             or not math.isclose(args.duration*10, round(args.duration*10), abs_tol=1e-8)):
         raise ValueError('duration must be positive and a multiple of 0.1 seconds')
@@ -98,7 +119,9 @@ def preflight(args):
         for key in ('source_xy', 'target_xy'):
             if len(row[key]) != 2 or not all(math.isfinite(value) for value in row[key]):
                 raise ValueError(f'Invalid coordinate pair: {row["name"]}/{key}')
+    output, model_outputs, split = comparison_outputs(args, checkpoints, checkpoint_configs, manifest, started_at)
     return dict(output=output, model_outputs=model_outputs, checkpoints=checkpoints,
+                started_at=started_at, evaluation_split=split,
                 checkpoint_configs=checkpoint_configs, policy_config=policy_path,
                 positions_config=positions_path, positions_bytes=positions_bytes,
                 positions_manifest_sha256=hashlib.sha256(positions_bytes).hexdigest(),
@@ -116,11 +139,15 @@ def prepare_comparison(args):
     for kind in MODEL_ORDER:
         argv = ['--policy-config', str(planned['policy_config']),
                 '--checkpoint', str(planned['checkpoints'][kind]),
-                '--positions-config', str(manifest), '--output', str(planned['model_outputs'][kind]),
+                '--positions-config', str(manifest),
                 '--workers', str(args.workers), '--n-action-steps', str(args.n_action_steps),
                 '--duration', str(args.duration), '--device', args.device, '--backend', args.backend,
                 '--no-stop-on-contact', '--no-contact-diagnostics']
-        configs[kind] = evaluate.prepare(evaluate.parse_args(argv))
+        if args.output or getattr(args, f'{kind}_output'):
+            argv.extend(['--output', str(planned['model_outputs'][kind])])
+        if planned['evaluation_split']:
+            argv.extend(['--split', planned['evaluation_split']])
+        configs[kind] = evaluate.prepare(evaluate.parse_args(argv), started_at=planned['started_at'])
     for kind, config in configs.items():
         if (config['policy_type'] != kind
                 or config['positions_manifest_sha256'] != planned['positions_manifest_sha256']
@@ -130,7 +157,8 @@ def prepare_comparison(args):
         if configs['act'][key] != configs['diffusion'][key]:
             raise ValueError(f'Model configurations must share identical {key}')
     configuration = dict(
-        format_version=1, output=str(output), started_at=evaluate.timestamp(), completed_at=None,
+        format_version=1, output=str(output), started_at=planned['started_at'], completed_at=None,
+        evaluation_split=planned['evaluation_split'],
         workers=args.workers, scheduling='single_shared_pool_diffusion_positions_first',
         job_order=[dict(model=kind, position=f'pos{i}') for kind in MODEL_ORDER for i in range(10)],
         positions_config_requested=str(planned['positions_config']), positions_config=str(manifest),

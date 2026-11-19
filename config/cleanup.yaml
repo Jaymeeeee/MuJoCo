@@ -1,5 +1,5 @@
 # Cleanup is deliberately restricted to disposable verification output.
-# assets/, examples/, outputs/datasets/, and other output directories are outside its fixed scope.
+# assets/, examples/, datasets/, and other output directories are outside its fixed scope.
 schema_version: 1
 scope: outputs/_checks
 retention_days: 7

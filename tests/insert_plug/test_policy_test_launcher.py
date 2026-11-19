@@ -13,7 +13,7 @@ from examples.insert_plug.policy import evaluate as launcher
 
 @pytest.fixture
 def configuration(tmp_path):
-    model = tmp_path / 'outputs/train/example_run/artifacts/checkpoints/030000/pretrained_model'
+    model = tmp_path / 'outputs/train/example_run/checkpoints/030000/pretrained_model'
     model.mkdir(parents=True)
     (model / 'config.json').write_text(json.dumps(dict(type='act', chunk_size=100)))
     (model / 'model.safetensors').write_bytes(b'synthetic model')
@@ -199,6 +199,7 @@ def test_existing_output_is_preserved(configuration):
 @pytest.mark.parametrize('kind,modality,heldout', [
     ('act', 'rgb', False), ('act', 'rgbd', True),
     ('diffusion', 'rgb', True), ('diffusion', 'rgbd', False),
+    ('diffusion_dit', 'rgbd', False),
 ])
 def test_default_batch_name_uses_model_variant_split_and_local_test_start(
         configuration, monkeypatch, kind, modality, heldout):
@@ -206,12 +207,14 @@ def test_default_batch_name_uses_model_variant_split_and_local_test_start(
     monkeypatch.setattr(launcher, 'ROOT', root)
     monkeypatch.setattr(launcher, 'timestamp', lambda: '2026-11-11T16:30:45+00:00')
     model = Path(configuration['checkpoint'])
-    old_run = model.parents[3]
+    old_run = model.parents[2]
     new_run = old_run.with_name(f'{kind}_insert_plug_v1_{modality}_20261108_154950')
     old_run.rename(new_run)
     model = new_run / model.relative_to(old_run)
-    saved = dict(type=kind, chunk_size=64, horizon=64, n_obs_steps=1,
+    saved = dict(type=kind.split('_')[0], chunk_size=64, horizon=64, n_obs_steps=1,
                  input_features={'observation.images.head': dict(type='VISUAL', shape=[3, 256, 256])})
+    if kind == 'diffusion_dit':
+        saved['denoiser_type'] = 'dit'
     if modality == 'rgbd':
         saved['depth_camera_map'] = {'observation.images.head': 'observation.depth.head'}
     (model / 'config.json').write_text(json.dumps(saved))
@@ -233,7 +236,7 @@ def test_default_batch_name_uses_model_variant_split_and_local_test_start(
     configured = launcher.prepare(args)
     split = 'ood' if heldout else 'ind'
     assert configured['output'] == str(root / 'outputs/test' /
-        f'{kind}_insert_plug_v1_{modality}_{split}_20261112_003045')
+        f'{kind}_insert_plug_v1_{modality}' / split / '20261112_003045')
     assert configured['evaluation_split'] == split
     assert configured['output_name_timezone'] == 'Asia/Shanghai'
     assert configured['output_name_timestamp_source'] == 'started_at'
@@ -252,7 +255,7 @@ def test_unknown_layout_requires_explicit_split_for_default_name(tmp_path, monke
     with pytest.raises(ValueError, match='specify --split or --output'):
         launcher.default_output_name(*values, None, start)
     name, split = launcher.default_output_name(*values, 'ood', start)
-    assert name == 'act_insert_plug_v1_rgb_ood_20261112_003045'
+    assert name == Path('act_insert_plug_v1_rgb/ood/20261112_003045')
     assert split == 'ood'
 
 
@@ -326,6 +329,7 @@ def test_diffusion_execution_window_preserves_horizon_scheduler_and_seed_blocks(
     assert configured['policy_type'] == 'diffusion'
     assert configured['checkpoint_config'] == saved
     assert configured['policy_settings']['horizon'] == 64
+    assert configured['policy_settings']['denoiser_type'] == 'unet'
     assert configured['policy_settings']['n_obs_steps'] == 1
     assert configured['policy_settings']['num_inference_steps'] == 100
     assert configured['policy_settings']['checkpoint_num_inference_steps'] is None
@@ -346,7 +350,7 @@ def test_diffusion_rejects_unavailable_execution_window(configuration, n_obs_ste
         diffusion_configuration(configuration, n_obs_steps=n_obs_steps, n_action_steps=n_action_steps)
 
 
-@pytest.mark.parametrize('field,value', [('policy_type', 'act'), ('horizon', 32),
+@pytest.mark.parametrize('field,value', [('policy_type', 'act'), ('horizon', 32), ('denoiser_type', 'dit'),
                                         ('num_inference_steps', 25), ('checkpoint_n_action_steps', 32)])
 def test_diffusion_report_cannot_change_model_or_sampling_settings(configuration, field, value):
     configured, _ = diffusion_configuration(configuration)
